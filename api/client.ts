@@ -212,6 +212,39 @@ export async function downloadArrangement(id: number): Promise<Blob> {
 }
 
 /**
+ * Validate that a loop has an accessible source file
+ * @param loopId - The loop ID
+ */
+export async function validateLoopSource(loopId: number): Promise<void> {
+  try {
+    const response = await fetch(`${API_BASE_PATH}/v1/loops/${loopId}/play`, {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+    });
+
+    if (!response.ok) {
+      let errorMessage = `Loop source unavailable: ${response.status} ${response.statusText}`;
+      try {
+        const errorData = await response.json();
+        errorMessage = errorData.message || errorData.detail || errorMessage;
+      } catch {
+      }
+      throw new LoopArchitectApiError(errorMessage, response.status);
+    }
+  } catch (error) {
+    if (error instanceof LoopArchitectApiError) {
+      throw error;
+    }
+    throw new LoopArchitectApiError(
+      `Failed to validate loop source: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      500
+    );
+  }
+}
+
+/**
  * Upload a loop file
  * @param file - The audio file to upload
  * @returns Promise with the created loop details

@@ -6,6 +6,7 @@ import {
   generateArrangement,
   getArrangementStatus,
   downloadArrangement,
+  validateLoopSource,
   LoopArchitectApiError,
   type ArrangementStatusResponse,
 } from '@/../../api/client'
@@ -115,6 +116,9 @@ export default function GeneratePage() {
     }
 
     try {
+      // Pre-check loop source availability so users don't queue doomed jobs
+      await validateLoopSource(loopIdNum)
+
       const options: { bars?: number; duration?: number } = {}
       
       if (arrangementType === 'bars') {
@@ -140,7 +144,7 @@ export default function GeneratePage() {
     } catch (err) {
       if (err instanceof LoopArchitectApiError) {
         // Check for missing file error (400 status with "missing" in message)
-        if (err.status === 400 && err.message.toLowerCase().includes('missing')) {
+        if ((err.status === 400 || err.status === 404) && err.message.toLowerCase().includes('missing')) {
           setError(`file_missing:${err.message}`)
         } else {
           setError(err.message)
