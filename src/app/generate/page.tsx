@@ -139,7 +139,12 @@ export default function GeneratePage() {
       setArrangementId(response.arrangement_id)
     } catch (err) {
       if (err instanceof LoopArchitectApiError) {
-        setError(err.message)
+        // Check for missing file error (400 status with "missing" in message)
+        if (err.status === 400 && err.message.toLowerCase().includes('missing')) {
+          setError(`file_missing:${err.message}`)
+        } else {
+          setError(err.message)
+        }
       } else {
         setError('Failed to generate arrangement. Please try again.')
       }
@@ -340,7 +345,7 @@ export default function GeneratePage() {
                 <div className="bg-red-900/50 border border-red-700 rounded-lg p-4">
                   <div className="flex items-start">
                     <svg
-                      className="h-5 w-5 text-red-400 mt-0.5"
+                      className="h-5 w-5 text-red-400 mt-0.5 flex-shrink-0"
                       fill="currentColor"
                       viewBox="0 0 20 20"
                     >
@@ -350,7 +355,39 @@ export default function GeneratePage() {
                         clipRule="evenodd"
                       />
                     </svg>
-                    <p className="ml-3 text-sm text-red-200">{error}</p>
+                    <div className="ml-3 flex-1">
+                      {error.startsWith('file_missing:') ? (
+                        <>
+                          <p className="text-sm font-medium text-red-200">
+                            Loop source file not found
+                          </p>
+                          <p className="text-sm text-red-300 mt-1">
+                            The loop file associated with this ID is no longer available. Please upload a new loop to generate an arrangement.
+                          </p>
+                          <Link
+                            href="/"
+                            className="inline-flex items-center mt-3 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg transition-colors"
+                          >
+                            <svg
+                              className="h-4 w-4 mr-2"
+                              fill="none"
+                              stroke="currentColor"
+                              viewBox="0 0 24 24"
+                            >
+                              <path
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                                strokeWidth={2}
+                                d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"
+                              />
+                            </svg>
+                            Upload New Loop
+                          </Link>
+                        </>
+                      ) : (
+                        <p className="text-sm text-red-200">{error}</p>
+                      )}
+                    </div>
                   </div>
                 </div>
               )}
