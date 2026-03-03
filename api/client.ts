@@ -1,0 +1,216 @@
+// API Client for LoopArchitect Frontend
+// Connects Next.js frontend to FastAPI backend on Railway
+
+const API_BASE_PATH = '/api';
+
+// ============================================================================
+// Type Definitions
+// ============================================================================
+
+export interface Arrangement {
+  id: number;
+  loop_id: number;
+  status: 'pending' | 'processing' | 'completed' | 'failed';
+  error_message?: string;
+  output_file?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface GenerateArrangementResponse {
+  id: number;
+  status: string;
+  message: string;
+}
+
+export interface ArrangementStatusResponse {
+  id: number;
+  status: 'pending' | 'processing' | 'completed' | 'failed';
+  progress?: number;
+  error_message?: string;
+  output_file?: string;
+}
+
+export interface ApiError {
+  message: string;
+  status: number;
+  details?: unknown;
+}
+
+// ============================================================================
+// Error Handling
+// ============================================================================
+
+class LoopArchitectApiError extends Error {
+  status: number;
+  details?: unknown;
+
+  constructor(message: string, status: number, details?: unknown) {
+    super(message);
+    this.name = 'LoopArchitectApiError';
+    this.status = status;
+    this.details = details;
+  }
+}
+
+async function handleResponse<T>(response: Response): Promise<T> {
+  if (!response.ok) {
+    let errorMessage = `API Error: ${response.status} ${response.statusText}`;
+    let errorDetails: unknown;
+
+    try {
+      const errorData = await response.json();
+      errorMessage = errorData.message || errorData.detail || errorMessage;
+      errorDetails = errorData;
+    } catch {
+      // If response is not JSON, use status text
+    }
+
+    throw new LoopArchitectApiError(errorMessage, response.status, errorDetails);
+  }
+
+  // Handle empty responses
+  const contentType = response.headers.get('content-type');
+  if (contentType && contentType.includes('application/json')) {
+    return response.json();
+  }
+
+  return {} as T;
+}
+
+// ============================================================================
+// API Functions
+// ============================================================================
+
+/**
+ * Generate a new arrangement from a loop
+ * @param loopId - The ID of the loop to generate an arrangement from
+ * @param options - Optional parameters for bars or duration
+ * @returns Promise with the generated arrangement details
+ */
+export async function generateArrangement(
+  loopId: number,
+  options?: { bars?: number; duration?: number }
+): Promise<GenerateArrangementResponse> {
+  try {
+    const requestBody: { loop_id: number; bars?: number; duration?: number } = {
+      loop_id: loopId,
+    };
+    
+    if (options?.bars) requestBody.bars = options.bars;
+    if (options?.duration) requestBody.duration = options.duration;
+
+    const response = await fetch(`${API_BASE_PATH}/v1/arrangements/generate`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(requestBody),
+    });
+
+    return handleResponse<GenerateArrangementResponse>(response);
+  } catch (error) {
+    if (error instanceof LoopArchitectApiError) {
+      throw error;
+    }
+    throw new LoopArchitectApiError(
+      `Failed to generate arrangement: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      500
+    );
+  }
+}
+
+/**
+ * Get the status of an arrangement
+ * @param id - The arrangement ID
+ * @returns Promise with the arrangement status
+ */
+export async function getArrangementStatus(
+  id: number
+): Promise<ArrangementStatusResponse> {
+  try {
+    const response = await fetch(`${API_BASE_PATH}/v1/arrangements/${id}`, {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+    });
+
+    return handleResponse<ArrangementStatusResponse>(response);
+  } catch (error) {
+    if (error instanceof LoopArchitectApiError) {
+      throw error;
+    }
+    throw new LoopArchitectApiError(
+      `Failed to get arrangement status: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      500
+    );
+  }
+}
+
+/**
+ * Download a completed arrangement
+ * @param id - The arrangement ID
+ * @returns Promise with the audio file as a Blob
+ */
+export async function downloadArrangement(id: number): Promise<Blob> {
+  try {
+    const response = await fetch(
+      `${API_BASE_PATH}/v1/arrangements/${id}/download`,
+      {
+        method: 'GET',
+      }
+    );
+
+    if (!response.ok) {
+      let errorMessage = `Download failed: ${response.status} ${response.statusText}`;
+      try {
+        const errorData = await response.json();
+        errorMessage = errorData.message || errorData.detail || errorMessage;
+      } catch {
+        // Not JSON, use status text
+      }
+      throw new LoopArchitectApiError(errorMessage, response.status);
+    }
+
+    return response.blob();
+  } catch (error) {
+    if (error instanceof LoopArchitectApiError) {
+      throw error;
+    }
+    throw new LoopArchitectApiError(
+      `Failed to download arrangement: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      500
+    );
+  }
+}
+
+/**
+ * Upload a loop file
+ * @param file - The audio file to upload
+ * @returns Promise with the created loop details
+ */
+export async function uploadLoop(file: File): Promise<{ id: number; message: string }> {
+  try {
+    const formData = new FormData();
+    formData.append('file', file);
+
+    const response = await fetch(`${API_BASE_PATH}/v1/loops`, {
+      method: 'POST',
+      body: formData,
+    });
+
+    return handleResponse<{ id: number; message: string }>(response);
+  } catch (error) {
+    if (error instanceof LoopArchitectApiError) {
+      throw error;
+    }
+    throw new LoopArchitectApiError(
+      `Failed to upload loop: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      500
+    );
+  }
+}
+
+// Export error class for external use
+export { LoopArchitectApiError };

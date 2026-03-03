@@ -1,4 +1,4 @@
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'https://looparchitect-backend-api.onrender.com'
+const API_BASE_PATH = '/api'
 
 interface LoopPlayResponse {
   url: string
@@ -17,7 +17,7 @@ export interface LoopResponse {
  * @returns Promise resolving to the audio URL
  */
 export async function fetchLoopPlayUrl(loopId: number): Promise<string> {
-  const url = `${API_BASE_URL}/api/v1/loops/${loopId}/play`
+  const url = `${API_BASE_PATH}/v1/loops/${loopId}/play`
   console.log(`[API] Fetching play URL for loop ID ${loopId}:`, url)
   
   try {
@@ -65,7 +65,7 @@ export async function apiFetch<T>(
   endpoint: string,
   options: RequestInit = {}
 ): Promise<T> {
-  const url = `${API_BASE_URL}${endpoint}`
+  const url = endpoint.startsWith('/api/') ? endpoint : `${API_BASE_PATH}${endpoint}`
   
   try {
     const response = await fetch(url, {
