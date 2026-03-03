@@ -30,9 +30,11 @@ export interface LoopResponse {
 export interface Arrangement {
   id: number;
   loop_id: number;
-  status: 'pending' | 'processing' | 'completed' | 'failed';
+  status: 'queued' | 'pending' | 'processing' | 'done' | 'completed' | 'failed';
   error_message?: string;
   output_file?: string;
+  output_s3_key?: string;
+  target_seconds?: number;
   created_at: string;
   updated_at: string;
 }
@@ -169,6 +171,55 @@ export async function getArrangementStatus(
     }
     throw new LoopArchitectApiError(
       `Failed to get arrangement status: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      500
+    );
+  }
+}
+
+/**
+ * List recent arrangements
+ * @param options - Optional filters for loop and max results
+ * @returns Promise with arrangement rows sorted by newest first
+ */
+export async function listArrangements(options?: {
+  loopId?: number;
+  status?: string;
+  limit?: number;
+}): Promise<Arrangement[]> {
+  try {
+    const params = new URLSearchParams();
+    if (options?.loopId) {
+      params.set('loop_id', String(options.loopId));
+    }
+
+    const query = params.toString();
+    const response = await fetch(
+      `${API_BASE_PATH}/v1/arrangements${query ? `?${query}` : ''}`,
+      {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      }
+    );
+
+    let rows = await handleResponse<Arrangement[]>(response);
+    
+    // Client-side status filter since backend doesn't support it yet
+    if (options?.status && options.status !== 'all') {
+      rows = rows.filter((row) => row.status === options.status);
+    }
+    
+    if (options?.limit && options.limit > 0) {
+      return rows.slice(0, options.limit);
+    }
+    return rows;
+  } catch (error) {
+    if (error instanceof LoopArchitectApiError) {
+      throw error;
+    }
+    throw new LoopArchitectApiError(
+      `Failed to list arrangements: ${error instanceof Error ? error.message : 'Unknown error'}`,
       500
     );
   }

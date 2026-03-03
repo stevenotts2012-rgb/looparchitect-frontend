@@ -6,12 +6,15 @@ import {
   generateArrangement,
   getArrangementStatus,
   downloadArrangement,
+  listArrangements,
   validateLoopSource,
   LoopArchitectApiError,
+  type Arrangement,
   type ArrangementStatusResponse,
 } from '@/../../api/client'
 import ArrangementStatus from '@/components/ArrangementStatus'
 import DownloadButton from '@/components/DownloadButton'
+import GenerationHistory from '@/components/GenerationHistory'
 
 export default function GeneratePage() {
   const [loopId, setLoopId] = useState<string>('')
@@ -24,6 +27,11 @@ export default function GeneratePage() {
   const [arrangementId, setArrangementId] = useState<number | null>(null)
   const [arrangementStatus, setArrangementStatus] = useState<ArrangementStatusResponse | null>(null)
   const [audioUrl, setAudioUrl] = useState<string | null>(null)
+  const [historyRows, setHistoryRows] = useState<Arrangement[]>([])
+  const [isHistoryLoading, setIsHistoryLoading] = useState(false)
+  const [historyError, setHistoryError] = useState<string | null>(null)
+  const [historyStatusFilter, setHistoryStatusFilter] = useState<string>('all')
+  const [historyLoopIdFilter, setHistoryLoopIdFilter] = useState<string>('')
 
   const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null)
 
@@ -36,6 +44,32 @@ export default function GeneratePage() {
     }
   }, [])
 
+  const loadHistory = async (requestedLoopId?: number, statusFilter?: string) => {
+    setIsHistoryLoading(true)
+    setHistoryError(null)
+
+    try {
+      const rows = await listArrangements({
+        loopId: requestedLoopId,
+        status: statusFilter || historyStatusFilter,
+        limit: 10,
+      })
+      setHistoryRows(rows)
+    } catch (err) {
+      if (err instanceof LoopArchitectApiError) {
+        setHistoryError(err.message)
+      } else {
+        setHistoryError('Failed to load generation history.')
+      }
+    } finally {
+      setIsHistoryLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    loadHistory()
+  }, [])
+
   // Poll arrangement status
   useEffect(() => {
     if (!arrangementId) return
@@ -45,14 +79,17 @@ export default function GeneratePage() {
         const status = await getArrangementStatus(arrangementId)
         setArrangementStatus(status)
 
-        // Stop polling if done/completed or failed
-        if (status.status === 'done' || status.status === 'completed' || status.status === 'failed') {
+        const isFinished =
+          status.status === 'done' || status.status === 'completed' || status.status === 'failed'
+
+        if (isFinished) {
           if (pollingIntervalRef.current) {
             clearInterval(pollingIntervalRef.current)
             pollingIntervalRef.current = null
           }
 
-          // If done/completed, prepare audio preview
+          await loadHistory()
+
           if (status.status === 'done' || status.status === 'completed') {
             try {
               const blob = await downloadArrangement(arrangementId)
@@ -93,6 +130,55 @@ export default function GeneratePage() {
       }
     }
   }, [audioUrl])
+
+  const handleHistoryRefresh = async () => {
+    const loopIdNum = parseInt(historyLoopIdFilter || loopId, 10)
+    const validLoopId = !Number.isNaN(loopIdNum) && loopIdNum > 0 ? loopIdNum : undefined
+    await loadHistory(validLoopId, historyStatusFilter)
+  }
+
+  const handleHistoryDownload = async (selectedArrangementId: number) => {
+    try {
+      const blob = await downloadArrangement(selectedArrangementId)
+      const url = URL.createObjectURL(blob)
+      const anchor = document.createElement('a')
+      anchor.href = url
+      anchor.download = `arrangement_${selectedArrangementId}.wav`
+      document.body.appendChild(anchor)
+      anchor.click()
+      anchor.remove()
+      URL.revokeObjectURL(url)
+    } catch (err) {
+      if (err instanceof LoopArchitectApiError) {
+        setError(err.message)
+      } else {
+        setError('Failed to download arrangement.')
+      }
+    }
+  }
+
+  const handleFilterChange = (status: string, loopId: string) => {
+    setHistoryStatusFilter(status)
+    setHistoryLoopIdFilter(loopId)
+    
+    const loopIdNum = loopId ? parseInt(loopId, 10) : undefined
+    const validLoopId = loopIdNum && !Number.isNaN(loopIdNum) && loopIdNum > 0 ? loopIdNum : undefined
+    
+    loadHistory(validLoopId, status)
+  }
+
+  const handleRetry = (retryLoopId: number, targetSeconds: number) => {
+    setLoopId(String(retryLoopId))
+    setArrangementType('duration')
+    setDuration(String(targetSeconds))
+    setArrangementId(null)
+    setArrangementStatus(null)
+    setError(null)
+    if (audioUrl) {
+      URL.revokeObjectURL(audioUrl)
+      setAudioUrl(null)
+    }
+  }
 
   const handleGenerate = async () => {
     if (!loopId) {
@@ -141,6 +227,7 @@ export default function GeneratePage() {
 
       const response = await generateArrangement(loopIdNum, options)
       setArrangementId(response.arrangement_id)
+      await loadHistory(loopIdNum)
     } catch (err) {
       if (err instanceof LoopArchitectApiError) {
         // Check for missing file error (400 status with "missing" in message)
@@ -448,13 +535,28 @@ export default function GeneratePage() {
             </div>
           )}
 
+          <GenerationHistory
+            rows={historyRows}
+            loading={isHistoryLoading}
+            error={historyError}
+            activeArrangementId={arrangementId}
+            onRefresh={handleHistoryRefresh}
+            onTrack={(selectedArrangementId) => {
+              setArrangementId(selectedArrangementId)
+              setError(null)
+            }}
+            onDownload={handleHistoryDownload}
+            onRetry={handleRetry}
+            onFilterChange={handleFilterChange}
+          />
+
           {/* Arrangement Status */}
           {arrangementId && arrangementStatus && (
             <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
               <ArrangementStatus arrangement={arrangementStatus} />
 
               {/* Audio Preview */}
-              {arrangementStatus.status === 'completed' && audioUrl && (
+              {(arrangementStatus.status === 'done' || arrangementStatus.status === 'completed') && audioUrl && (
                 <div className="bg-gray-900/50 border border-gray-800 rounded-lg p-6">
                   <h3 className="text-lg font-semibold text-white mb-4">
                     Preview Your Arrangement
@@ -474,7 +576,7 @@ export default function GeneratePage() {
               )}
 
               {/* Download Button */}
-              {arrangementStatus.status === 'completed' && (
+              {(arrangementStatus.status === 'done' || arrangementStatus.status === 'completed') && (
                 <DownloadButton arrangementId={arrangementId} />
               )}
 
