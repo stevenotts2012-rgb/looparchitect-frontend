@@ -1,7 +1,6 @@
 'use client'
 
 import { useState, useEffect, useRef } from 'react'
-import { useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import {
   generateArrangement,
@@ -14,10 +13,7 @@ import ArrangementStatus from '@/components/ArrangementStatus'
 import DownloadButton from '@/components/DownloadButton'
 
 export default function GeneratePage() {
-  const searchParams = useSearchParams()
-  const initialLoopId = searchParams.get('loopId')
-
-  const [loopId, setLoopId] = useState<string>(initialLoopId || '')
+  const [loopId, setLoopId] = useState<string>('')
   const [arrangementType, setArrangementType] = useState<'bars' | 'duration'>('bars')
   const [bars, setBars] = useState<string>('8')
   const [duration, setDuration] = useState<string>('30')
@@ -29,6 +25,15 @@ export default function GeneratePage() {
   const [audioUrl, setAudioUrl] = useState<string | null>(null)
 
   const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null)
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const urlParams = new URLSearchParams(window.location.search)
+    const queryLoopId = urlParams.get('loopId')
+    if (queryLoopId) {
+      setLoopId(queryLoopId)
+    }
+  }, [])
 
   // Poll arrangement status
   useEffect(() => {

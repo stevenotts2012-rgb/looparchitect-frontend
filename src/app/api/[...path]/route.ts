@@ -79,8 +79,6 @@ export async function GET(request: NextRequest, context: RouteContext): Promise<
 }
 
 export async function POST(request: NextRequest, { params }: RouteContext): Promise<Response> {
-  console.log("BACKEND_ORIGIN =", process.env.BACKEND_ORIGIN);
-  console.log("Proxy path =", params?.path);
   return proxy(request, params.path, 'POST')
 }
 
