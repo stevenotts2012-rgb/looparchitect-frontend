@@ -7,6 +7,26 @@ const API_BASE_PATH = '/api';
 // Type Definitions
 // ============================================================================
 
+export interface LoopResponse {
+  id: number;
+  name: string;
+  filename?: string;
+  file_url?: string;
+  file_key?: string;
+  title?: string;
+  tempo?: number;
+  bpm?: number;
+  bars?: number;
+  key?: string;
+  musical_key?: string;
+  genre?: string;
+  duration_seconds?: number;
+  status?: string;
+  processed_file_url?: string;
+  analysis_json?: string;
+  created_at: string;
+}
+
 export interface Arrangement {
   id: number;
   loop_id: number;
@@ -196,17 +216,27 @@ export async function downloadArrangement(id: number): Promise<Blob> {
  * @param file - The audio file to upload
  * @returns Promise with the created loop details
  */
-export async function uploadLoop(file: File): Promise<{ id: number; message: string }> {
+export async function uploadLoop(file: File): Promise<LoopResponse> {
   try {
     const formData = new FormData();
+    
+    // Create loop metadata with filename as name
+    const loopMetadata = {
+      name: file.name,
+      filename: file.name,
+    };
+    
+    // Append as JSON string (backend expects loop_in as Form field)
+    formData.append('loop_in', JSON.stringify(loopMetadata));
+    // Append the audio file
     formData.append('file', file);
 
-    const response = await fetch(`${API_BASE_PATH}/v1/loops`, {
+    const response = await fetch(`${API_BASE_PATH}/v1/loops/with-file`, {
       method: 'POST',
       body: formData,
     });
 
-    return handleResponse<{ id: number; message: string }>(response);
+    return handleResponse<LoopResponse>(response);
   } catch (error) {
     if (error instanceof LoopArchitectApiError) {
       throw error;
