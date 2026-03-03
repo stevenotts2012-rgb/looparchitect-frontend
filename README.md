@@ -33,6 +33,9 @@ npm install
 
 # Run the development server
 npm run dev
+
+# Stable startup (cleans stale local Next.js processes, uses port 3001)
+npm run dev:stable
 ```
 
 Open [http://localhost:3000](http://localhost:3000) in your browser.
@@ -82,6 +85,7 @@ The app connects to the FastAPI backend at `/api/v1/loops/19/play` to fetch inst
 ## Available Scripts
 
 - `npm run dev` - Start development server
+- `npm run dev:stable` - Start development server with automatic local port/process cleanup
 - `npm run build` - Build for production
 - `npm start` - Start production server
 - `npm run lint` - Run ESLint
