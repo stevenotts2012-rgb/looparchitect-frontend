@@ -46,7 +46,7 @@ export interface GenerateArrangementResponse {
 
 export interface ArrangementStatusResponse {
   id: number;
-  status: 'pending' | 'processing' | 'completed' | 'failed';
+  status: 'queued' | 'processing' | 'done' | 'failed' | 'pending' | 'completed';
   progress?: number;
   error_message?: string;
   output_file?: string;

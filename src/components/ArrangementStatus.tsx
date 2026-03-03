@@ -9,10 +9,12 @@ interface ArrangementStatusProps {
 export default function ArrangementStatus({ arrangement }: ArrangementStatusProps) {
   const getStatusColor = (status: string) => {
     switch (status) {
+      case 'queued':
       case 'pending':
         return 'bg-yellow-900/50 border-yellow-700 text-yellow-200'
       case 'processing':
         return 'bg-blue-900/50 border-blue-700 text-blue-200'
+      case 'done':
       case 'completed':
         return 'bg-green-900/50 border-green-700 text-green-200'
       case 'failed':
@@ -24,6 +26,7 @@ export default function ArrangementStatus({ arrangement }: ArrangementStatusProp
 
   const getStatusIcon = (status: string) => {
     switch (status) {
+      case 'queued':
       case 'pending':
         return (
           <svg className="h-5 w-5" fill="currentColor" viewBox="0 0 20 20">
@@ -57,6 +60,7 @@ export default function ArrangementStatus({ arrangement }: ArrangementStatusProp
             />
           </svg>
         )
+      case 'done':
       case 'completed':
         return (
           <svg className="h-5 w-5" fill="currentColor" viewBox="0 0 20 20">
@@ -84,10 +88,12 @@ export default function ArrangementStatus({ arrangement }: ArrangementStatusProp
 
   const getStatusText = (status: string) => {
     switch (status) {
+      case 'queued':
       case 'pending':
         return 'Waiting in queue...'
       case 'processing':
         return 'Generating arrangement...'
+      case 'done':
       case 'completed':
         return 'Arrangement ready!'
       case 'failed':
@@ -147,7 +153,7 @@ export default function ArrangementStatus({ arrangement }: ArrangementStatusProp
         )}
 
         {/* Output File Info */}
-        {arrangement.status === 'completed' && arrangement.output_file && (
+        {(arrangement.status === 'done' || arrangement.status === 'completed') && arrangement.output_file && (
           <div className="mt-4 p-3 bg-black/30 rounded border border-green-800">
             <div className="flex items-center space-x-2">
               <svg className="h-4 w-4" fill="currentColor" viewBox="0 0 20 20">

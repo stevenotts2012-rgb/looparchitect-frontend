@@ -44,15 +44,15 @@ export default function GeneratePage() {
         const status = await getArrangementStatus(arrangementId)
         setArrangementStatus(status)
 
-        // Stop polling if completed or failed
-        if (status.status === 'completed' || status.status === 'failed') {
+        // Stop polling if done/completed or failed
+        if (status.status === 'done' || status.status === 'completed' || status.status === 'failed') {
           if (pollingIntervalRef.current) {
             clearInterval(pollingIntervalRef.current)
             pollingIntervalRef.current = null
           }
 
-          // If completed, prepare audio preview
-          if (status.status === 'completed') {
+          // If done/completed, prepare audio preview
+          if (status.status === 'done' || status.status === 'completed') {
             try {
               const blob = await downloadArrangement(arrangementId)
               const url = URL.createObjectURL(blob)
