@@ -18,9 +18,10 @@ export interface Arrangement {
 }
 
 export interface GenerateArrangementResponse {
-  id: number;
+  arrangement_id: number;
+  loop_id: number;
   status: string;
-  message: string;
+  created_at: string;
 }
 
 export interface ArrangementStatusResponse {
@@ -85,20 +86,25 @@ async function handleResponse<T>(response: Response): Promise<T> {
 /**
  * Generate a new arrangement from a loop
  * @param loopId - The ID of the loop to generate an arrangement from
- * @param options - Optional parameters for bars or duration
+ * @param options - Parameters including targetSeconds (required) and other options
  * @returns Promise with the generated arrangement details
  */
 export async function generateArrangement(
   loopId: number,
-  options?: { bars?: number; duration?: number }
+  options?: { targetSeconds?: number; duration?: number; genre?: string; intensity?: string; includeStems?: boolean }
 ): Promise<GenerateArrangementResponse> {
   try {
-    const requestBody: { loop_id: number; bars?: number; duration?: number } = {
+    // Use targetSeconds if provided, otherwise duration, otherwise default to 180 seconds
+    const targetSeconds = options?.targetSeconds || options?.duration || 180;
+    
+    const requestBody: { loop_id: number; target_seconds: number; genre?: string; intensity?: string; include_stems?: boolean } = {
       loop_id: loopId,
+      target_seconds: targetSeconds,
     };
     
-    if (options?.bars) requestBody.bars = options.bars;
-    if (options?.duration) requestBody.duration = options.duration;
+    if (options?.genre) requestBody.genre = options.genre;
+    if (options?.intensity) requestBody.intensity = options.intensity;
+    if (options?.includeStems !== undefined) requestBody.include_stems = options.includeStems;
 
     const response = await fetch(`${API_BASE_PATH}/v1/arrangements/generate`, {
       method: 'POST',

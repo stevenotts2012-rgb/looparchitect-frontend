@@ -136,7 +136,7 @@ export default function GeneratePage() {
       }
 
       const response = await generateArrangement(loopIdNum, options)
-      setArrangementId(response.id)
+      setArrangementId(response.arrangement_id)
     } catch (err) {
       if (err instanceof LoopArchitectApiError) {
         setError(err.message)
