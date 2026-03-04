@@ -1,11 +1,12 @@
 import { NextRequest } from 'next/server'
+import { randomUUID } from 'crypto'
 
 const ALLOWED_METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'] as const
 
 type AllowedMethod = (typeof ALLOWED_METHODS)[number]
 
 function getBackendOrigin(): string | null {
-  const backendOrigin = process.env.BACKEND_ORIGIN?.trim()
+  const backendOrigin = (process.env.BACKEND_ORIGIN || process.env.NEXT_PUBLIC_API_URL || '').trim()
   if (!backendOrigin) {
     return null
   }
@@ -25,6 +26,9 @@ function buildTargetUrl(request: NextRequest, pathSegments: string[]): string | 
 function forwardRequestHeaders(request: NextRequest): Headers {
   const headers = new Headers(request.headers)
   headers.delete('host')
+  if (!headers.get('x-correlation-id')) {
+    headers.set('x-correlation-id', randomUUID())
+  }
   return headers
 }
 
@@ -38,6 +42,7 @@ async function proxy(request: NextRequest, pathSegments: string[], method: Allow
   }
 
   const requestHeaders = forwardRequestHeaders(request)
+  const correlationId = requestHeaders.get('x-correlation-id') || randomUUID()
   const init: RequestInit = {
     method,
     headers: requestHeaders,
@@ -51,6 +56,7 @@ async function proxy(request: NextRequest, pathSegments: string[], method: Allow
   try {
     const upstreamResponse = await fetch(targetUrl, init)
     const responseHeaders = new Headers(upstreamResponse.headers)
+    responseHeaders.set('x-correlation-id', correlationId)
 
     return new Response(upstreamResponse.body, {
       status: upstreamResponse.status,
@@ -62,6 +68,7 @@ async function proxy(request: NextRequest, pathSegments: string[], method: Allow
       {
         error: 'Proxy request failed',
         detail: error instanceof Error ? error.message : 'Unknown error',
+        correlation_id: correlationId,
       },
       { status: 502 }
     )

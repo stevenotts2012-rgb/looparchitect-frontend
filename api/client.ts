@@ -3,6 +3,20 @@
 
 const API_BASE_PATH = '/api';
 
+function generateCorrelationId(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return `cid_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+}
+
+function createJsonHeaders(correlationId: string): HeadersInit {
+  return {
+    'Content-Type': 'application/json',
+    'x-correlation-id': correlationId,
+  };
+}
+
 // ============================================================================
 // Type Definitions
 // ============================================================================
@@ -149,6 +163,7 @@ export async function generateArrangement(
   }
 ): Promise<GenerateArrangementResponse> {
   try {
+    const correlationId = generateCorrelationId();
     // Use targetSeconds if provided, otherwise duration, otherwise default to 180 seconds
     const targetSeconds = options?.targetSeconds || options?.duration || 180;
     
@@ -181,13 +196,18 @@ export async function generateArrangement(
 
     const response = await fetch(`${API_BASE_PATH}/v1/arrangements/generate`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers: createJsonHeaders(correlationId),
       body: JSON.stringify(requestBody),
     });
 
-    return handleResponse<GenerateArrangementResponse>(response);
+    const payload = await handleResponse<GenerateArrangementResponse>(response);
+    console.info('feature_event', {
+      event: 'arrangement_created',
+      correlation_id: correlationId,
+      arrangement_id: payload.arrangement_id,
+      sections_count: payload.structure_preview?.length || 0,
+    });
+    return payload;
   } catch (error) {
     if (error instanceof LoopArchitectApiError) {
       throw error;
@@ -201,11 +221,10 @@ export async function generateArrangement(
 
 export async function listStylePresets(): Promise<StylePresetResponse[]> {
   try {
+    const correlationId = generateCorrelationId();
     const response = await fetch(`${API_BASE_PATH}/v1/styles`, {
       method: 'GET',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers: createJsonHeaders(correlationId),
     });
 
     const payload = await handleResponse<{ styles: StylePresetResponse[] }>(response);
@@ -230,11 +249,10 @@ export async function getArrangementStatus(
   id: number
 ): Promise<ArrangementStatusResponse> {
   try {
+    const correlationId = generateCorrelationId();
     const response = await fetch(`${API_BASE_PATH}/v1/arrangements/${id}`, {
       method: 'GET',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers: createJsonHeaders(correlationId),
     });
 
     return handleResponse<ArrangementStatusResponse>(response);
@@ -272,11 +290,10 @@ export async function validateStyle(profile: {
   message: string;
 }> {
   try {
+    const correlationId = generateCorrelationId();
     const response = await fetch(`${API_BASE_PATH}/v1/styles/validate`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers: createJsonHeaders(correlationId),
       body: JSON.stringify({ profile }),
     });
 
@@ -303,6 +320,7 @@ export async function listArrangements(options?: {
   limit?: number;
 }): Promise<Arrangement[]> {
   try {
+    const correlationId = generateCorrelationId();
     const params = new URLSearchParams();
     if (options?.loopId) {
       params.set('loop_id', String(options.loopId));
@@ -313,9 +331,7 @@ export async function listArrangements(options?: {
       `${API_BASE_PATH}/v1/arrangements${query ? `?${query}` : ''}`,
       {
         method: 'GET',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: createJsonHeaders(correlationId),
       }
     );
 
@@ -385,11 +401,10 @@ export async function downloadArrangement(id: number): Promise<Blob> {
  */
 export async function getLoop(loopId: number): Promise<LoopResponse> {
   try {
+    const correlationId = generateCorrelationId();
     const response = await fetch(`${API_BASE_PATH}/v1/loops/${loopId}`, {
       method: 'GET',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers: createJsonHeaders(correlationId),
     });
 
     return handleResponse<LoopResponse>(response);
@@ -441,11 +456,10 @@ export async function downloadLoop(loopId: number): Promise<string> {
  */
 export async function validateLoopSource(loopId: number): Promise<void> {
   try {
+    const correlationId = generateCorrelationId();
     const response = await fetch(`${API_BASE_PATH}/v1/loops/${loopId}/play`, {
       method: 'GET',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers: createJsonHeaders(correlationId),
     });
 
     if (!response.ok) {
@@ -475,6 +489,7 @@ export async function validateLoopSource(loopId: number): Promise<void> {
  */
 export async function uploadLoop(file: File): Promise<LoopResponse> {
   try {
+    const correlationId = generateCorrelationId();
     const formData = new FormData();
     
     // Create loop metadata with filename as name
@@ -490,10 +505,21 @@ export async function uploadLoop(file: File): Promise<LoopResponse> {
 
     const response = await fetch(`${API_BASE_PATH}/v1/loops/with-file`, {
       method: 'POST',
+      headers: {
+        'x-correlation-id': correlationId,
+      },
       body: formData,
     });
 
-    return handleResponse<LoopResponse>(response);
+    const payload = await handleResponse<LoopResponse>(response);
+    console.info('feature_event', {
+      event: 'loop_created',
+      correlation_id: correlationId,
+      loop_id: payload.id,
+      bpm: payload.bpm,
+      bars: payload.bars,
+    });
+    return payload;
   } catch (error) {
     if (error instanceof LoopArchitectApiError) {
       throw error;
