@@ -44,6 +44,27 @@ export interface GenerateArrangementResponse {
   loop_id: number;
   status: string;
   created_at: string;
+  render_job_ids?: string[];
+  seed_used?: number;
+  style_preset?: string;
+  style_profile?: Record<string, unknown>;
+  structure_preview?: Array<{ name: string; bars: number; energy: number }>;
+}
+
+export interface StylePresetResponse {
+  id: string;
+  display_name: string;
+  description: string;
+  defaults: {
+    tempo_multiplier: number;
+    drum_density: number;
+    hat_roll_probability: number;
+    glide_probability: number;
+    swing: number;
+    aggression: number;
+    melody_complexity: number;
+    fx_intensity: number;
+  };
 }
 
 export interface ArrangementStatusResponse {
@@ -113,13 +134,37 @@ async function handleResponse<T>(response: Response): Promise<T> {
  */
 export async function generateArrangement(
   loopId: number,
-  options?: { targetSeconds?: number; duration?: number; genre?: string; intensity?: string; includeStems?: boolean }
+  options?: {
+    targetSeconds?: number;
+    duration?: number;
+    genre?: string;
+    intensity?: string;
+    includeStems?: boolean;
+    stylePreset?: string;
+    styleParams?: Record<string, number>;
+    seed?: number | string;
+    variationCount?: number;
+    styleTextInput?: string;
+    useAiParsing?: boolean;
+  }
 ): Promise<GenerateArrangementResponse> {
   try {
     // Use targetSeconds if provided, otherwise duration, otherwise default to 180 seconds
     const targetSeconds = options?.targetSeconds || options?.duration || 180;
     
-    const requestBody: { loop_id: number; target_seconds: number; genre?: string; intensity?: string; include_stems?: boolean } = {
+    const requestBody: {
+      loop_id: number;
+      target_seconds: number;
+      genre?: string;
+      intensity?: string;
+      include_stems?: boolean;
+      style_preset?: string;
+      style_params?: Record<string, number>;
+      seed?: number | string;
+      variation_count?: number;
+      style_text_input?: string;
+      use_ai_parsing?: boolean;
+    } = {
       loop_id: loopId,
       target_seconds: targetSeconds,
     };
@@ -127,6 +172,12 @@ export async function generateArrangement(
     if (options?.genre) requestBody.genre = options.genre;
     if (options?.intensity) requestBody.intensity = options.intensity;
     if (options?.includeStems !== undefined) requestBody.include_stems = options.includeStems;
+    if (options?.stylePreset) requestBody.style_preset = options.stylePreset;
+    if (options?.styleParams) requestBody.style_params = options.styleParams;
+    if (options?.seed !== undefined) requestBody.seed = options.seed;
+    if (options?.variationCount !== undefined) requestBody.variation_count = options.variationCount;
+    if (options?.styleTextInput) requestBody.style_text_input = options.styleTextInput;
+    if (options?.useAiParsing !== undefined) requestBody.use_ai_parsing = options.useAiParsing;
 
     const response = await fetch(`${API_BASE_PATH}/v1/arrangements/generate`, {
       method: 'POST',
@@ -143,6 +194,28 @@ export async function generateArrangement(
     }
     throw new LoopArchitectApiError(
       `Failed to generate arrangement: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      500
+    );
+  }
+}
+
+export async function listStylePresets(): Promise<StylePresetResponse[]> {
+  try {
+    const response = await fetch(`${API_BASE_PATH}/v1/styles`, {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+    });
+
+    const payload = await handleResponse<{ styles: StylePresetResponse[] }>(response);
+    return payload.styles || [];
+  } catch (error) {
+    if (error instanceof LoopArchitectApiError) {
+      throw error;
+    }
+    throw new LoopArchitectApiError(
+      `Failed to list style presets: ${error instanceof Error ? error.message : 'Unknown error'}`,
       500
     );
   }
@@ -257,6 +330,63 @@ export async function downloadArrangement(id: number): Promise<Blob> {
     }
     throw new LoopArchitectApiError(
       `Failed to download arrangement: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      500
+    );
+  }
+}
+
+/**
+ * Get loop details
+ * @param loopId - The loop ID
+ * @returns Promise with the loop details
+ */
+export async function getLoop(loopId: number): Promise<LoopResponse> {
+  try {
+    const response = await fetch(`${API_BASE_PATH}/v1/loops/${loopId}`, {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+    });
+
+    return handleResponse<LoopResponse>(response);
+  } catch (error) {
+    if (error instanceof LoopArchitectApiError) {
+      throw error;
+    }
+    throw new LoopArchitectApiError(
+      `Failed to get loop details: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      500
+    );
+  }
+}
+
+/**
+ * Download loop audio as a blob
+ * @param loopId - The loop ID
+ * @returns Promise with a blob URL for the loop audio
+ */
+export async function downloadLoop(loopId: number): Promise<string> {
+  try {
+    const response = await fetch(`${API_BASE_PATH}/v1/loops/${loopId}/download`, {
+      method: 'GET',
+    });
+
+    if (!response.ok) {
+      throw new LoopArchitectApiError(
+        `Failed to download loop: ${response.statusText}`,
+        response.status
+      );
+    }
+
+    const blob = await response.blob();
+    return URL.createObjectURL(blob);
+  } catch (error) {
+    if (error instanceof LoopArchitectApiError) {
+      throw error;
+    }
+    throw new LoopArchitectApiError(
+      `Failed to download loop audio: ${error instanceof Error ? error.message : 'Unknown error'}`,
       500
     );
   }

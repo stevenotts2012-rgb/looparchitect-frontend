@@ -7,14 +7,20 @@ import {
   getArrangementStatus,
   downloadArrangement,
   listArrangements,
+  listStylePresets,
   validateLoopSource,
+  getLoop,
+  downloadLoop,
   LoopArchitectApiError,
   type Arrangement,
   type ArrangementStatusResponse,
+  type StylePresetResponse,
 } from '@/../../api/client'
 import ArrangementStatus from '@/components/ArrangementStatus'
 import DownloadButton from '@/components/DownloadButton'
 import GenerationHistory from '@/components/GenerationHistory'
+import WaveformViewer from '@/components/WaveformViewer'
+import BeforeAfterComparison from '@/components/BeforeAfterComparison'
 
 export default function GeneratePage() {
   const [loopId, setLoopId] = useState<string>('')
@@ -27,11 +33,21 @@ export default function GeneratePage() {
   const [arrangementId, setArrangementId] = useState<number | null>(null)
   const [arrangementStatus, setArrangementStatus] = useState<ArrangementStatusResponse | null>(null)
   const [audioUrl, setAudioUrl] = useState<string | null>(null)
+  const [loopAudioUrl, setLoopAudioUrl] = useState<string | null>(null)
   const [historyRows, setHistoryRows] = useState<Arrangement[]>([])
   const [isHistoryLoading, setIsHistoryLoading] = useState(false)
   const [historyError, setHistoryError] = useState<string | null>(null)
   const [historyStatusFilter, setHistoryStatusFilter] = useState<string>('all')
   const [historyLoopIdFilter, setHistoryLoopIdFilter] = useState<string>('')
+  const [stylePresets, setStylePresets] = useState<StylePresetResponse[]>([])
+  const [stylePreset, setStylePreset] = useState<string>('')
+  const [seed, setSeed] = useState<string>('')
+  const [structurePreview, setStructurePreview] = useState<Array<{ name: string; bars: number; energy: number }>>([])
+
+  // V2: Natural language style input
+  const [styleMode, setStyleMode] = useState<'preset' | 'naturalLanguage'>('preset')
+  const [styleTextInput, setStyleTextInput] = useState<string>('')
+  const [useAiParsing, setUseAiParsing] = useState<boolean>(true)
 
   const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null)
 
@@ -70,6 +86,21 @@ export default function GeneratePage() {
     loadHistory()
   }, [])
 
+  useEffect(() => {
+    const loadStyles = async () => {
+      try {
+        const presets = await listStylePresets()
+        setStylePresets(presets)
+        if (presets.length > 0) {
+          setStylePreset(presets[0].id)
+        }
+      } catch {
+        setStylePresets([])
+      }
+    }
+    loadStyles()
+  }, [])
+
   // Poll arrangement status
   useEffect(() => {
     if (!arrangementId) return
@@ -95,6 +126,16 @@ export default function GeneratePage() {
               const blob = await downloadArrangement(arrangementId)
               const url = URL.createObjectURL(blob)
               setAudioUrl(url)
+
+              // Also load the original loop audio for comparison
+              if (loopId) {
+                try {
+                  const loopUrl = await downloadLoop(parseInt(loopId))
+                  setLoopAudioUrl(loopUrl)
+                } catch (loopErr) {
+                  console.error('Failed to load loop audio:', loopErr)
+                }
+              }
             } catch (err) {
               console.error('Failed to load audio preview:', err)
             }
@@ -122,14 +163,17 @@ export default function GeneratePage() {
     }
   }, [arrangementId])
 
-  // Cleanup audio URL on unmount
+  // Cleanup audio URLs on unmount
   useEffect(() => {
     return () => {
       if (audioUrl) {
         URL.revokeObjectURL(audioUrl)
       }
+      if (loopAudioUrl) {
+        URL.revokeObjectURL(loopAudioUrl)
+      }
     }
-  }, [audioUrl])
+  }, [audioUrl, loopAudioUrl])
 
   const handleHistoryRefresh = async () => {
     const loopIdNum = parseInt(historyLoopIdFilter || loopId, 10)
@@ -178,6 +222,10 @@ export default function GeneratePage() {
       URL.revokeObjectURL(audioUrl)
       setAudioUrl(null)
     }
+    if (loopAudioUrl) {
+      URL.revokeObjectURL(loopAudioUrl)
+      setLoopAudioUrl(null)
+    }
   }
 
   const handleGenerate = async () => {
@@ -196,16 +244,28 @@ export default function GeneratePage() {
     setError(null)
     setArrangementId(null)
     setArrangementStatus(null)
+    setStructurePreview([])
     if (audioUrl) {
       URL.revokeObjectURL(audioUrl)
       setAudioUrl(null)
+    }
+    if (loopAudioUrl) {
+      URL.revokeObjectURL(loopAudioUrl)
+      setLoopAudioUrl(null)
     }
 
     try {
       // Pre-check loop source availability so users don't queue doomed jobs
       await validateLoopSource(loopIdNum)
 
-      const options: { bars?: number; duration?: number } = {}
+      const options: { 
+        bars?: number
+        duration?: number
+        stylePreset?: string
+        seed?: number | string
+        styleTextInput?: string
+        useAiParsing?: boolean
+      } = {}
       
       if (arrangementType === 'bars') {
         const barsNum = parseInt(bars, 10)
@@ -225,8 +285,30 @@ export default function GeneratePage() {
         options.duration = durationNum
       }
 
+      // V2: Include natural language style input if in that mode
+      if (styleMode === 'naturalLanguage') {
+        if (!styleTextInput.trim()) {
+          setError('Please enter a style description or switch to Preset mode')
+          setIsGenerating(false)
+          return
+        }
+        options.styleTextInput = styleTextInput.trim()
+        options.useAiParsing = useAiParsing
+      } else {
+        // V1: Include preset-based style
+        if (stylePreset) {
+          options.stylePreset = stylePreset
+        }
+      }
+      
+      if (seed.trim()) {
+        const numericSeed = Number(seed)
+        options.seed = Number.isNaN(numericSeed) ? seed.trim() : numericSeed
+      }
+
       const response = await generateArrangement(loopIdNum, options)
       setArrangementId(response.arrangement_id)
+      setStructurePreview(response.structure_preview || [])
       await loadHistory(loopIdNum)
     } catch (err) {
       if (err instanceof LoopArchitectApiError) {
@@ -431,6 +513,157 @@ export default function GeneratePage() {
                 </div>
               )}
 
+              {/* V2: Style Mode Toggle */}
+              <div>
+                <label className="block text-sm font-medium text-gray-300 mb-3">
+                  Style Mode
+                </label>
+                <div className="grid grid-cols-2 gap-4">
+                  <button
+                    onClick={() => setStyleMode('preset')}
+                    disabled={isGenerating}
+                    className={`px-6 py-4 rounded-lg font-medium transition-all ${
+                      styleMode === 'preset'
+                        ? 'bg-blue-600 text-white border-2 border-blue-500'
+                        : 'bg-gray-800 text-gray-300 border-2 border-gray-700 hover:border-gray-600'
+                    }`}
+                  >
+                    <div className="flex flex-col items-center">
+                      <svg
+                        className="h-6 w-6 mb-2"
+                        fill="none"
+                        stroke="currentColor"
+                        viewBox="0 0 24 24"
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth={2}
+                          d="M7 21a4 4 0 01-4-4V5a2 2 0 012-2h4a2 2 0 012 2v12a4 4 0 01-4 4zm0 0h12a2 2 0 002-2v-4a2 2 0 00-2-2h-2.343M11 7.343l1.657-1.657a2 2 0 012.828 0l2.829 2.829a2 2 0 010 2.828l-8.486 8.485M7 17h.01"
+                        />
+                      </svg>
+                      <span>Preset</span>
+                    </div>
+                  </button>
+                  <button
+                    onClick={() => setStyleMode('naturalLanguage')}
+                    disabled={isGenerating}
+                    className={`px-6 py-4 rounded-lg font-medium transition-all ${
+                      styleMode === 'naturalLanguage'
+                        ? 'bg-blue-600 text-white border-2 border-blue-500'
+                        : 'bg-gray-800 text-gray-300 border-2 border-gray-700 hover:border-gray-600'
+                    }`}
+                  >
+                    <div className="flex flex-col items-center">
+                      <svg
+                        className="h-6 w-6 mb-2"
+                        fill="none"
+                        stroke="currentColor"
+                        viewBox="0 0 24 24"
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth={2}
+                          d="M13 10V3L4 14h7v7l9-11h-7z"
+                        />
+                      </svg>
+                      <span>Natural Language</span>
+                    </div>
+                  </button>
+                </div>
+              </div>
+
+              {/* V1: Style Preset (shown when preset mode) */}
+              {styleMode === 'preset' && (
+                <div>
+                  <label
+                    htmlFor="style-preset"
+                    className="block text-sm font-medium text-gray-300 mb-2"
+                  >
+                    Style Preset
+                  </label>
+                  <select
+                    id="style-preset"
+                    value={stylePreset}
+                    onChange={(e) => setStylePreset(e.target.value)}
+                    className="w-full px-4 py-3 bg-gray-800 border border-gray-700 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    disabled={isGenerating || stylePresets.length === 0}
+                  >
+                    {stylePresets.length === 0 ? (
+                      <option value="">Default (style engine unavailable)</option>
+                    ) : (
+                      stylePresets.map((preset) => (
+                        <option key={preset.id} value={preset.id}>
+                          {preset.display_name}
+                        </option>
+                      ))
+                    )}
+                  </select>
+                </div>
+              )}
+
+              {/* V2: Natural Language Input (shown when natural language mode) */}
+              {styleMode === 'naturalLanguage' && (
+                <div className="space-y-3">
+                  <div>
+                    <label
+                      htmlFor="style-text"
+                      className="block text-sm font-medium text-gray-300 mb-2"
+                    >
+                      Describe Your Style *
+                    </label>
+                    <textarea
+                      id="style-text"
+                      value={styleTextInput}
+                      onChange={(e) => setStyleTextInput(e.target.value.slice(0, 500))}
+                      placeholder="e.g., 'Southside type, aggressive, beat switch after hook' or 'Dark cinematic, Metro vibe, minimal bounce'"
+                      className="w-full px-4 py-3 bg-gray-800 border border-gray-700 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none"
+                      rows={3}
+                      disabled={isGenerating}
+                      maxLength={500}
+                    />
+                    <p className="mt-1 text-xs text-gray-500">
+                      {styleTextInput.length}/500 characters
+                    </p>
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <input
+                      id="use-ai"
+                      type="checkbox"
+                      checked={useAiParsing}
+                      onChange={(e) => setUseAiParsing(e.target.checked)}
+                      className="w-4 h-4 bg-gray-700 border border-gray-600 rounded focus:ring-2 focus:ring-blue-500"
+                      disabled={isGenerating}
+                    />
+                    <label htmlFor="use-ai" className="text-sm text-gray-300 cursor-pointer">
+                      Use AI to parse natural language (recommended)
+                    </label>
+                  </div>
+                </div>
+              )}
+
+              {/* Style Preset (kept for preset mode) */}
+
+              {/* Seed */}
+              <div>
+                <label
+                  htmlFor="seed"
+                  className="block text-sm font-medium text-gray-300 mb-2"
+                >
+                  Seed (optional)
+                </label>
+                <input
+                  id="seed"
+                  type="text"
+                  value={seed}
+                  onChange={(e) => setSeed(e.target.value)}
+                  placeholder="e.g., 42 or atl-demo"
+                  className="w-full px-4 py-3 bg-gray-800 border border-gray-700 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  disabled={isGenerating}
+                />
+              </div>
+
               {/* Error Message */}
               {error && (
                 <div className="bg-red-900/50 border border-red-700 rounded-lg p-4">
@@ -532,6 +765,20 @@ export default function GeneratePage() {
                   </>
                 )}
               </button>
+
+              {structurePreview.length > 0 && (
+                <div className="bg-gray-800/50 border border-gray-700 rounded-lg p-4">
+                  <p className="text-sm font-medium text-gray-200 mb-2">Structure Preview</p>
+                  <div className="space-y-1">
+                    {structurePreview.map((section, index) => (
+                      <div key={`${section.name}-${index}`} className="text-sm text-gray-300 flex justify-between">
+                        <span className="capitalize">{section.name}</span>
+                        <span>{section.bars} bars · energy {section.energy.toFixed(2)}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
@@ -555,23 +802,19 @@ export default function GeneratePage() {
             <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
               <ArrangementStatus arrangement={arrangementStatus} />
 
-              {/* Audio Preview */}
+              {/* Audio Waveform Preview */}
               {(arrangementStatus.status === 'done' || arrangementStatus.status === 'completed') && audioUrl && (
                 <div className="bg-gray-900/50 border border-gray-800 rounded-lg p-6">
-                  <h3 className="text-lg font-semibold text-white mb-4">
-                    Preview Your Arrangement
-                  </h3>
-                  <audio
-                    controls
-                    src={audioUrl}
-                    className="w-full"
-                    style={{
-                      borderRadius: '8px',
-                      backgroundColor: '#1f2937',
-                    }}
-                  >
-                    Your browser does not support the audio element.
-                  </audio>
+                  {loopAudioUrl ? (
+                    <BeforeAfterComparison
+                      beforeUrl={loopAudioUrl}
+                      afterUrl={audioUrl}
+                      beforeTitle="Original Loop"
+                      afterTitle="Generated Arrangement"
+                    />
+                  ) : (
+                    <WaveformViewer audioUrl={audioUrl} title="Preview Your Arrangement" />
+                  )}
                 </div>
               )}
 
