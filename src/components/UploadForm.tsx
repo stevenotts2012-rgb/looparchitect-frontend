@@ -161,6 +161,8 @@ export default function UploadForm({ onUploadSuccess }: UploadFormProps) {
             }}
             className="text-gray-400 hover:text-white"
             disabled={isUploading}
+            aria-label="Clear selected file"
+            title="Clear selected file"
           >
             <svg className="h-5 w-5" fill="currentColor" viewBox="0 0 20 20">
               <path

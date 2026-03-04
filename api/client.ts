@@ -141,7 +141,7 @@ export async function generateArrangement(
     intensity?: string;
     includeStems?: boolean;
     stylePreset?: string;
-    styleParams?: Record<string, number>;
+    styleParams?: Record<string, number | string>;
     seed?: number | string;
     variationCount?: number;
     styleTextInput?: string;
@@ -159,7 +159,7 @@ export async function generateArrangement(
       intensity?: string;
       include_stems?: boolean;
       style_preset?: string;
-      style_params?: Record<string, number>;
+      style_params?: Record<string, number | string>;
       seed?: number | string;
       variation_count?: number;
       style_text_input?: string;
@@ -244,6 +244,49 @@ export async function getArrangementStatus(
     }
     throw new LoopArchitectApiError(
       `Failed to get arrangement status: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      500
+    );
+  }
+}
+
+/**
+ * Validate a style profile without generating audio
+ * @param profile - The style profile to validate
+ * @returns Promise with validation result and normalized profile
+ */
+export async function validateStyle(profile: {
+  intent: string;
+  energy?: number;
+  darkness?: number;
+  bounce?: number;
+  warmth?: number;
+  texture?: string;
+  references?: string[];
+  avoid?: string[];
+  seed?: number;
+  confidence?: number;
+}): Promise<{
+  valid: boolean;
+  normalized_profile: typeof profile;
+  warnings: string[];
+  message: string;
+}> {
+  try {
+    const response = await fetch(`${API_BASE_PATH}/v1/styles/validate`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ profile }),
+    });
+
+    return handleResponse(response);
+  } catch (error) {
+    if (error instanceof LoopArchitectApiError) {
+      throw error;
+    }
+    throw new LoopArchitectApiError(
+      `Failed to validate style: ${error instanceof Error ? error.message : 'Unknown error'}`,
       500
     );
   }

@@ -11,6 +11,7 @@ import {
   validateLoopSource,
   getLoop,
   downloadLoop,
+  validateStyle,
   LoopArchitectApiError,
   type Arrangement,
   type ArrangementStatusResponse,
@@ -21,6 +22,9 @@ import DownloadButton from '@/components/DownloadButton'
 import GenerationHistory from '@/components/GenerationHistory'
 import WaveformViewer from '@/components/WaveformViewer'
 import BeforeAfterComparison from '@/components/BeforeAfterComparison'
+import { StyleSliders } from '@/components/StyleSliders'
+import { StyleTextInput } from '@/components/StyleTextInput'
+import { SimpleStyleProfile } from '@/lib/styleSchema'
 
 export default function GeneratePage() {
   const [loopId, setLoopId] = useState<string>('')
@@ -48,6 +52,20 @@ export default function GeneratePage() {
   const [styleMode, setStyleMode] = useState<'preset' | 'naturalLanguage'>('preset')
   const [styleTextInput, setStyleTextInput] = useState<string>('')
   const [useAiParsing, setUseAiParsing] = useState<boolean>(true)
+  
+  // PHASE 3: Style parameters from sliders
+  const [styleProfile, setStyleProfile] = useState<Partial<SimpleStyleProfile>>({
+    intent: '',
+    energy: 0.5,
+    darkness: 0.5,
+    bounce: 0.5,
+    warmth: 0.5,
+    texture: 'balanced',
+    references: [],
+    avoid: [],
+    seed: 42,
+    confidence: 0.8,
+  })
 
   const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null)
 
@@ -262,6 +280,7 @@ export default function GeneratePage() {
         bars?: number
         duration?: number
         stylePreset?: string
+        styleParams?: Record<string, number | string>
         seed?: number | string
         styleTextInput?: string
         useAiParsing?: boolean
@@ -294,6 +313,11 @@ export default function GeneratePage() {
         }
         options.styleTextInput = styleTextInput.trim()
         options.useAiParsing = useAiParsing
+        
+        // PHASE 4: Include style slider values if any are set
+        if (styleProfile && Object.keys(styleProfile).length > 0) {
+          options.styleParams = styleProfile as Record<string, number | string>
+        }
       } else {
         // V1: Include preset-based style
         if (stylePreset) {
@@ -605,7 +629,7 @@ export default function GeneratePage() {
 
               {/* V2: Natural Language Input (shown when natural language mode) */}
               {styleMode === 'naturalLanguage' && (
-                <div className="space-y-3">
+                <div className="space-y-4">
                   <div>
                     <label
                       htmlFor="style-text"
@@ -640,6 +664,15 @@ export default function GeneratePage() {
                       Use AI to parse natural language (recommended)
                     </label>
                   </div>
+
+                  {/* PHASE 3: Style Sliders for fine-tuning */}
+                  <StyleSliders
+                    initialValues={styleProfile}
+                    onChange={(updatedStyle) => {
+                      setStyleProfile({ ...styleProfile, ...updatedStyle })
+                    }}
+                    disabled={isGenerating}
+                  />
                 </div>
               )}
 

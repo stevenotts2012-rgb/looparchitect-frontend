@@ -108,7 +108,6 @@ export default function AudioPlayer({
           ref={audioRef}
           src={url ?? ''}
           controls={!disabled}
-          aria-disabled={disabled}
           onPlay={handlePlay}
           onPause={handlePause}
           onError={handleError}
