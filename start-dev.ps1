@@ -8,6 +8,10 @@ Write-Host ""
 Write-Host "Press Ctrl+C to stop the server" -ForegroundColor Gray
 Write-Host ""
 
+# Ensure commands run from the frontend project directory
+$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+Set-Location $scriptDir
+
 # Kill stale listeners on common Next.js dev ports
 $ports = 3000..3005
 $pids = Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue |

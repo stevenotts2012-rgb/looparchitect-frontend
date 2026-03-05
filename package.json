@@ -5,6 +5,8 @@
   "scripts": {
     "dev": "next dev",
     "dev:stable": "powershell -ExecutionPolicy Bypass -File ./start-dev.ps1",
+    "generatevis": "npm run dev:stable",
+    "generate:vis": "npm run dev:stable",
     "build": "next build",
     "start": "next start",
     "lint": "next lint"
