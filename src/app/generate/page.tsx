@@ -6,6 +6,7 @@ import {
   generateArrangement,
   getArrangementStatus,
   downloadArrangement,
+  downloadDawExport,
   listArrangements,
   listStylePresets,
   validateLoopSource,
@@ -896,7 +897,31 @@ export default function GeneratePage() {
 
               {/* Download Button */}
               {(arrangementStatus.status === 'done' || arrangementStatus.status === 'completed') && (
-                <DownloadButton arrangementId={arrangementId} />
+                <div className="flex flex-col sm:flex-row gap-4">
+                  <DownloadButton arrangementId={arrangementId} />
+                  <button
+                    onClick={async () => {
+                      try {
+                        const blob = await downloadDawExport(arrangementId)
+                        const url = window.URL.createObjectURL(blob)
+                        const link = document.createElement('a')
+                        link.href = url
+                        link.download = `arrangement_${arrangementId}_daw_export.zip`
+                        document.body.appendChild(link)
+                        link.click()
+                        document.body.removeChild(link)
+                        window.URL.revokeObjectURL(url)
+                      } catch (err) {
+                        console.error('Failed to download DAW export:', err)
+                        alert('Failed to download DAW export. Please try again.')
+                      }
+                    }}
+                    className="bg-gray-700 hover:bg-gray-600 text-white font-semibold py-3 px-6 rounded-lg transition-colors"
+                    title="Download stems, MIDI, and markers for your DAW"
+                  >
+                    DAW Export (ZIP)
+                  </button>
+                </div>
               )}
 
               {/* Actions */}

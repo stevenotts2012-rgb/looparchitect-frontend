@@ -446,6 +446,44 @@ export async function getDawExportInfo(id: number): Promise<DawExportResponse> {
 }
 
 /**
+ * Download DAW export ZIP file for an arrangement
+ * @param id - The arrangement ID
+ * @returns Promise with the ZIP file as a Blob
+ */
+export async function downloadDawExport(id: number): Promise<Blob> {
+  try {
+    const correlationId = generateCorrelationId();
+    const response = await fetch(
+      `${API_BASE_PATH}/v1/arrangements/${id}/daw-export/download`,
+      {
+        method: 'GET',
+        headers: {
+          'x-correlation-id': correlationId,
+        },
+      }
+    );
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new LoopArchitectApiError(
+        `Failed to download DAW export: ${errorText}`,
+        response.status
+      );
+    }
+
+    return await response.blob();
+  } catch (error) {
+    if (error instanceof LoopArchitectApiError) {
+      throw error;
+    }
+    throw new LoopArchitectApiError(
+      `Failed to download DAW export: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      500
+    );
+  }
+}
+
+/**
  * Get loop details
  * @param loopId - The loop ID
  * @returns Promise with the loop details
