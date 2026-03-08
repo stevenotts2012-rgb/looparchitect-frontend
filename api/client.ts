@@ -48,6 +48,8 @@ export interface Arrangement {
   error_message?: string;
   output_file?: string;
   output_s3_key?: string;
+  export_s3_key?: string;
+  stems_zip_url?: string;
   target_seconds?: number;
   created_at: string;
   updated_at: string;
@@ -87,6 +89,24 @@ export interface ArrangementStatusResponse {
   progress?: number;
   error_message?: string;
   output_file?: string;
+  output_url?: string;
+  stems_zip_url?: string;
+  export_s3_key?: string;
+}
+
+export interface DawExportResponse {
+  arrangement_id: number;
+  ready_for_export: boolean;
+  download_url?: string;
+  export_s3_key?: string;
+  contents?: {
+    stems: string[];
+    midi: string[];
+    metadata: string[];
+  };
+  midi_note?: string;
+  status?: string;
+  message?: string;
 }
 
 export interface ApiError {
@@ -189,6 +209,7 @@ export async function generateArrangement(
       variation_count?: number;
       style_text_input?: string;
       use_ai_parsing?: boolean;
+      producer_moves?: string[];
     } = {
       loop_id: loopId,
       target_seconds: targetSeconds,
@@ -400,6 +421,25 @@ export async function downloadArrangement(id: number): Promise<Blob> {
     }
     throw new LoopArchitectApiError(
       `Failed to download arrangement: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      500
+    );
+  }
+}
+
+export async function getDawExportInfo(id: number): Promise<DawExportResponse> {
+  try {
+    const correlationId = generateCorrelationId();
+    const response = await fetch(`${API_BASE_PATH}/v1/arrangements/${id}/daw-export`, {
+      method: 'GET',
+      headers: createJsonHeaders(correlationId),
+    });
+    return handleResponse<DawExportResponse>(response);
+  } catch (error) {
+    if (error instanceof LoopArchitectApiError) {
+      throw error;
+    }
+    throw new LoopArchitectApiError(
+      `Failed to get DAW export info: ${error instanceof Error ? error.message : 'Unknown error'}`,
       500
     );
   }
