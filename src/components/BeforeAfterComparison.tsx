@@ -10,6 +10,24 @@ interface BeforeAfterComparisonProps {
   afterTitle?: string
 }
 
+function isAbortLikeError(error: unknown): boolean {
+  if (!error) return false
+
+  if (typeof error === 'object' && error !== null) {
+    const maybeName = 'name' in error ? String((error as { name?: unknown }).name || '') : ''
+    const maybeMessage =
+      'message' in error ? String((error as { message?: unknown }).message || '') : ''
+    return (
+      maybeName === 'AbortError' ||
+      maybeMessage.includes('signal is aborted') ||
+      maybeMessage.includes('aborted without reason')
+    )
+  }
+
+  const message = String(error)
+  return message.includes('AbortError') || message.includes('signal is aborted')
+}
+
 export default function BeforeAfterComparison({
   beforeUrl,
   afterUrl,
@@ -33,6 +51,23 @@ export default function BeforeAfterComparison({
 
   useEffect(() => {
     if (!beforeRef.current || !afterRef.current) return
+
+    console.log('BeforeAfterComparison: Loading audio', { beforeUrl, afterUrl })
+
+    setIsLoading(true)
+    setLoadedCount(0)
+    setBeforeTime(0)
+    setAfterTime(0)
+    setBeforeDuration(0)
+    setAfterDuration(0)
+    setBeforePlaying(false)
+    setAfterPlaying(false)
+    
+    // Safety timeout: force loading to stop after 5 seconds
+    const loadingTimeout = setTimeout(() => {
+      console.warn('Waveform loading timeout - forcing ready state')
+      setIsLoading(false)
+    }, 5000)
 
     const commonConfig = {
       waveColor: '#60a5fa',
@@ -62,15 +97,40 @@ export default function BeforeAfterComparison({
     afterWsRef.current = afterWs
 
     // Load audio files
-    beforeWs.load(beforeUrl)
-    afterWs.load(afterUrl)
+    void beforeWs.load(beforeUrl).catch((error) => {
+      if (isAbortLikeError(error)) {
+        // Aborted loads are silently ignored - let retry or timeout handle it
+        console.log('Before waveform load aborted (expected during React remount)')
+        return
+      }
+      console.error('Before waveform load error:', error)
+      setIsLoading(false)
+    })
+    void afterWs.load(afterUrl).catch((error) => {
+      if (isAbortLikeError(error)) {
+        // Aborted loads are silently ignored - let retry or timeout handle it
+        console.log('After waveform load aborted (expected during React remount)')
+        return
+      }
+      console.error('After waveform load error:', error)
+      setIsLoading(false)
+    })
 
     // Handle ready events
+    let beforeReadyHandled = false
+    let afterReadyHandled = false
+
     const handleBeforeReady = () => {
+      if (beforeReadyHandled) return
+      beforeReadyHandled = true
+      console.log('Before waveform ready, duration:', beforeWs.getDuration())
       setBeforeDuration(beforeWs.getDuration())
       setLoadedCount(prev => prev + 1)
     }
     const handleAfterReady = () => {
+      if (afterReadyHandled) return
+      afterReadyHandled = true
+      console.log('After waveform ready, duration:', afterWs.getDuration())
       setAfterDuration(afterWs.getDuration())
       setLoadedCount(prev => prev + 1)
     }
@@ -88,8 +148,25 @@ export default function BeforeAfterComparison({
     beforeWs.on('timeupdate', setBeforeTime)
     afterWs.on('timeupdate', setAfterTime)
 
+    beforeWs.on('error', (error) => {
+      if (isAbortLikeError(error)) {
+        return
+      }
+      console.error('Before waveform error:', error)
+      setIsLoading(false)
+    })
+
+    afterWs.on('error', (error) => {
+      if (isAbortLikeError(error)) {
+        return
+      }
+      console.error('After waveform error:', error)
+      setIsLoading(false)
+    })
+
     // Cleanup
     return () => {
+      clearTimeout(loadingTimeout)
       beforeWs.destroy()
       afterWs.destroy()
       beforeWsRef.current = null
@@ -176,7 +253,7 @@ export default function BeforeAfterComparison({
       )}
 
       {/* Before Waveform */}
-      {showBefore && !isLoading && (
+      {showBefore && (
         <div className="space-y-2">
           <div className="flex items-center justify-between">
             <h4 className="text-md font-medium text-white">{beforeTitle}</h4>
@@ -223,7 +300,7 @@ export default function BeforeAfterComparison({
       )}
 
       {/* After Waveform */}
-      {showAfter && !isLoading && (
+      {showAfter && (
         <div className="space-y-2">
           <div className="flex items-center justify-between">
             <h4 className="text-md font-medium text-white">{afterTitle}</h4>

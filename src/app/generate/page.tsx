@@ -22,8 +22,11 @@ import DownloadButton from '@/components/DownloadButton'
 import GenerationHistory from '@/components/GenerationHistory'
 import WaveformViewer from '@/components/WaveformViewer'
 import BeforeAfterComparison from '@/components/BeforeAfterComparison'
+import { ArrangementTimeline } from '@/components/ArrangementTimeline'
 import { StyleSliders } from '@/components/StyleSliders'
 import { StyleTextInput } from '@/components/StyleTextInput'
+import { ProducerMoves } from '@/components/ProducerMoves'
+import { HelpButton } from '@/components/HelpButton'
 import { SimpleStyleProfile } from '@/lib/styleSchema'
 
 export default function GeneratePage() {
@@ -46,6 +49,7 @@ export default function GeneratePage() {
   const [stylePresets, setStylePresets] = useState<StylePresetResponse[]>([])
   const [stylePreset, setStylePreset] = useState<string>('')
   const [seed, setSeed] = useState<string>('')
+  const [selectedMoves, setSelectedMoves] = useState<string[]>([])
   const [structurePreview, setStructurePreview] = useState<Array<{ name: string; bars: number; energy: number }>>([])
 
   // V2: Natural language style input
@@ -68,6 +72,8 @@ export default function GeneratePage() {
   })
 
   const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null)
+  const audioUrlRef = useRef<string | null>(null)
+  const loopAudioUrlRef = useRef<string | null>(null)
 
   useEffect(() => {
     if (typeof window === 'undefined') return
@@ -181,17 +187,25 @@ export default function GeneratePage() {
     }
   }, [arrangementId])
 
-  // Cleanup audio URLs on unmount
+  useEffect(() => {
+    audioUrlRef.current = audioUrl
+  }, [audioUrl])
+
+  useEffect(() => {
+    loopAudioUrlRef.current = loopAudioUrl
+  }, [loopAudioUrl])
+
+  // Cleanup audio URLs only on unmount
   useEffect(() => {
     return () => {
-      if (audioUrl) {
-        URL.revokeObjectURL(audioUrl)
+      if (audioUrlRef.current) {
+        URL.revokeObjectURL(audioUrlRef.current)
       }
-      if (loopAudioUrl) {
-        URL.revokeObjectURL(loopAudioUrl)
+      if (loopAudioUrlRef.current) {
+        URL.revokeObjectURL(loopAudioUrlRef.current)
       }
     }
-  }, [audioUrl, loopAudioUrl])
+  }, [])
 
   const handleHistoryRefresh = async () => {
     const loopIdNum = parseInt(historyLoopIdFilter || loopId, 10)
@@ -275,10 +289,13 @@ export default function GeneratePage() {
     try {
       // Pre-check loop source availability so users don't queue doomed jobs
       await validateLoopSource(loopIdNum)
+      const loopDetails = await getLoop(loopIdNum)
+      const loopBpm = Number(loopDetails.bpm || loopDetails.tempo || 120)
 
       const options: { 
         bars?: number
         duration?: number
+        loopBpm?: number
         stylePreset?: string
         styleParams?: Record<string, number | string>
         seed?: number | string
@@ -294,6 +311,7 @@ export default function GeneratePage() {
           return
         }
         options.bars = barsNum
+        options.loopBpm = loopBpm
       } else {
         const durationNum = parseInt(duration, 10)
         if (isNaN(durationNum) || durationNum <= 0) {
@@ -328,6 +346,11 @@ export default function GeneratePage() {
       if (seed.trim()) {
         const numericSeed = Number(seed)
         options.seed = Number.isNaN(numericSeed) ? seed.trim() : numericSeed
+      }
+
+      // Include producer moves
+      if (selectedMoves.length > 0) {
+        options.producerMoves = selectedMoves
       }
 
       const response = await generateArrangement(loopIdNum, options)
@@ -385,6 +408,7 @@ export default function GeneratePage() {
               >
                 Generate
               </Link>
+              <HelpButton contentKey="generate" variant="icon" />
             </nav>
           </div>
         </div>
@@ -678,6 +702,13 @@ export default function GeneratePage() {
 
               {/* Style Preset (kept for preset mode) */}
 
+              {/* Producer Moves */}
+              <ProducerMoves
+                selectedMoves={selectedMoves}
+                onChange={setSelectedMoves}
+                disabled={isGenerating}
+              />
+
               {/* Seed */}
               <div>
                 <label
@@ -800,16 +831,27 @@ export default function GeneratePage() {
               </button>
 
               {structurePreview.length > 0 && (
-                <div className="bg-gray-800/50 border border-gray-700 rounded-lg p-4">
-                  <p className="text-sm font-medium text-gray-200 mb-2">Structure Preview</p>
-                  <div className="space-y-1">
-                    {structurePreview.map((section, index) => (
-                      <div key={`${section.name}-${index}`} className="text-sm text-gray-300 flex justify-between">
-                        <span className="capitalize">{section.name}</span>
-                        <span>{section.bars} bars · energy {section.energy.toFixed(2)}</span>
-                      </div>
-                    ))}
+                <div className="bg-gray-800/50 border border-gray-700 rounded-lg p-6 space-y-4">
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-lg font-semibold text-white flex items-center gap-2">
+                      <svg className="w-5 h-5 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                      </svg>
+                      Structure Preview
+                    </h3>
+                    <span className="text-xs text-gray-400">
+                      {structurePreview.reduce((sum, s) => sum + s.bars, 0)} total bars
+                    </span>
                   </div>
+                  <ArrangementTimeline
+                    sections={structurePreview.map((section, index) => ({
+                      name: section.name,
+                      bar_start: structurePreview.slice(0, index).reduce((sum, s) => sum + s.bars, 0),
+                      bars: section.bars,
+                      energy: section.energy,
+                    }))}
+                    totalBars={structurePreview.reduce((sum, s) => sum + s.bars, 0)}
+                  />
                 </div>
               )}
             </div>

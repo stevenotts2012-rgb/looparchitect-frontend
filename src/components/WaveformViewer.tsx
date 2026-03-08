@@ -8,6 +8,24 @@ interface WaveformViewerProps {
   title?: string
 }
 
+function isAbortLikeError(error: unknown): boolean {
+  if (!error) return false
+
+  if (typeof error === 'object' && error !== null) {
+    const maybeName = 'name' in error ? String((error as { name?: unknown }).name || '') : ''
+    const maybeMessage =
+      'message' in error ? String((error as { message?: unknown }).message || '') : ''
+    return (
+      maybeName === 'AbortError' ||
+      maybeMessage.includes('signal is aborted') ||
+      maybeMessage.includes('aborted without reason')
+    )
+  }
+
+  const message = String(error)
+  return message.includes('AbortError') || message.includes('signal is aborted')
+}
+
 export default function WaveformViewer({ audioUrl, title = 'Waveform' }: WaveformViewerProps) {
   const waveformRef = useRef<HTMLDivElement>(null)
   const wavesurferRef = useRef<WaveSurfer | null>(null)
@@ -18,6 +36,17 @@ export default function WaveformViewer({ audioUrl, title = 'Waveform' }: Wavefor
 
   useEffect(() => {
     if (!waveformRef.current) return
+
+    setIsLoading(true)
+    setCurrentTime(0)
+    setDuration(0)
+    setIsPlaying(false)
+    
+    // Safety timeout: force loading to stop after 5 seconds
+    const loadingTimeout = setTimeout(() => {
+      console.warn('Waveform loading timeout - forcing ready state')
+      setIsLoading(false)
+    }, 5000)
 
     // Initialize WaveSurfer
     const wavesurfer = WaveSurfer.create({
@@ -37,7 +66,15 @@ export default function WaveformViewer({ audioUrl, title = 'Waveform' }: Wavefor
     wavesurferRef.current = wavesurfer
 
     // Load audio from blob URL
-    wavesurfer.load(audioUrl)
+    void wavesurfer.load(audioUrl).catch((error) => {
+      if (isAbortLikeError(error)) {
+        // Aborted load is expected during React remount - ignore it
+        console.log('WaveSurfer load aborted (expected during React remount)')
+        return
+      }
+      console.error('WaveSurfer load error:', error)
+      setIsLoading(false)
+    })
 
     // Handle ready event
     wavesurfer.on('ready', () => {
@@ -56,12 +93,16 @@ export default function WaveformViewer({ audioUrl, title = 'Waveform' }: Wavefor
 
     // Handle error
     wavesurfer.on('error', (error) => {
+      if (isAbortLikeError(error)) {
+        return
+      }
       console.error('WaveSurfer error:', error)
       setIsLoading(false)
     })
 
     // Cleanup
     return () => {
+      clearTimeout(loadingTimeout)
       wavesurfer.destroy()
       wavesurferRef.current = null
     }

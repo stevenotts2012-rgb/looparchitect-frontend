@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import Link from 'next/link'
 import UploadForm from '@/components/UploadForm'
+import { HelpButton } from '@/components/HelpButton'
 
 export default function Home() {
   const [uploadedLoopId, setUploadedLoopId] = useState<number | null>(null)
@@ -46,6 +47,7 @@ export default function Home() {
               >
                 Generate
               </Link>
+              <HelpButton contentKey="upload" variant="icon" />
             </nav>
           </div>
         </div>

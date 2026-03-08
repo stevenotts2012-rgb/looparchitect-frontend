@@ -151,6 +151,8 @@ export async function generateArrangement(
   options?: {
     targetSeconds?: number;
     duration?: number;
+    bars?: number;
+    loopBpm?: number;
     genre?: string;
     intensity?: string;
     includeStems?: boolean;
@@ -160,12 +162,20 @@ export async function generateArrangement(
     variationCount?: number;
     styleTextInput?: string;
     useAiParsing?: boolean;
+    producerMoves?: string[];
   }
 ): Promise<GenerateArrangementResponse> {
   try {
     const correlationId = generateCorrelationId();
-    // Use targetSeconds if provided, otherwise duration, otherwise default to 180 seconds
-    const targetSeconds = options?.targetSeconds || options?.duration || 180;
+    // Resolve target duration with priority: targetSeconds > duration > bars(+bpm) > default
+    let targetSeconds = options?.targetSeconds || options?.duration;
+    if (!targetSeconds && options?.bars) {
+      const bpm = options.loopBpm && options.loopBpm > 0 ? options.loopBpm : 120;
+      targetSeconds = Math.max(10, Math.round((options.bars * 4 * 60) / bpm));
+    }
+    if (!targetSeconds) {
+      targetSeconds = 180;
+    }
     
     const requestBody: {
       loop_id: number;
@@ -193,6 +203,7 @@ export async function generateArrangement(
     if (options?.variationCount !== undefined) requestBody.variation_count = options.variationCount;
     if (options?.styleTextInput) requestBody.style_text_input = options.styleTextInput;
     if (options?.useAiParsing !== undefined) requestBody.use_ai_parsing = options.useAiParsing;
+    if (options?.producerMoves) requestBody.producer_moves = options.producerMoves;
 
     const response = await fetch(`${API_BASE_PATH}/v1/arrangements/generate`, {
       method: 'POST',
