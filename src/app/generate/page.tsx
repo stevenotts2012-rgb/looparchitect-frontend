@@ -301,6 +301,7 @@ export default function GeneratePage() {
         seed?: number | string
         styleTextInput?: string
         useAiParsing?: boolean
+        producerMoves?: string[]
       } = {}
       
       if (arrangementType === 'bars') {
