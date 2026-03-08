@@ -40,6 +40,40 @@ npm run dev:stable
 
 Open [http://localhost:3000](http://localhost:3000) in your browser.
 
+## Local Development Setup
+
+Backend features depend on FFmpeg and Redis. Use the helper script to check both before starting services.
+
+### Install FFmpeg (Windows)
+
+```bash
+winget install --id Gyan.FFmpeg -e
+```
+
+### Install Redis (Windows options)
+
+```bash
+# Docker option (recommended)
+docker run --name looparchitect-redis -p 6379:6379 -d redis:7
+```
+
+Alternative options:
+- Memurai (Redis-compatible for Windows)
+- WSL2 + `redis-server`
+
+### Run dependency checks
+
+```bash
+npm run dev:services
+```
+
+This runs `scripts/dev_setup.ps1` from the backend and prints:
+- FFmpeg detected/missing
+- Redis installed/running status
+- Install instructions when dependencies are missing
+
+Development mode can still run when Redis is not running (non-queue routes remain available).
+
 ### Build for Production
 
 ```bash
@@ -85,6 +119,7 @@ The app connects to the FastAPI backend at `/api/v1/loops/19/play` to fetch inst
 ## Available Scripts
 
 - `npm run dev` - Start development server
+- `npm run dev:services` - Check local FFmpeg/Redis dependencies and show setup guidance
 - `npm run dev:stable` - Start development server with automatic local port/process cleanup
 - `npm run build` - Build for production
 - `npm start` - Start production server

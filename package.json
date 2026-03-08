@@ -4,6 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
+    "dev:services": "powershell -ExecutionPolicy Bypass -File ../looparchitect-backend-api/scripts/dev_setup.ps1",
     "dev:stable": "powershell -ExecutionPolicy Bypass -File ./start-dev.ps1",
     "generatevis": "npm run dev:stable",
     "generate:vis": "npm run dev:stable",
