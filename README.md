@@ -128,3 +128,5 @@ The app connects to the FastAPI backend at `/api/v1/loops/19/play` to fetch inst
 ## License
 
 Proprietary - All Rights Reserved
+
+<!-- redeploy trigger: 2026-03-10 15:56:44 -04:00 -->
