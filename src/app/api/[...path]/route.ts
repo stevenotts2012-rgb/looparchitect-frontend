@@ -1,6 +1,8 @@
 import { NextRequest } from 'next/server'
 import { randomUUID } from 'crypto'
 
+export const runtime = 'nodejs'
+
 const ALLOWED_METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'] as const
 
 type AllowedMethod = (typeof ALLOWED_METHODS)[number]
@@ -76,27 +78,42 @@ async function proxy(request: NextRequest, pathSegments: string[], method: Allow
 }
 
 interface RouteContext {
-  params: {
+  params:
+    | {
+        path: string[]
+      }
+    | Promise<{
     path: string[]
-  }
+      }>
+}
+
+async function resolvePathSegments(context: RouteContext): Promise<string[]> {
+  const params = await context.params
+  const path = params?.path
+  return Array.isArray(path) ? path : []
 }
 
 export async function GET(request: NextRequest, context: RouteContext): Promise<Response> {
-  return proxy(request, context.params.path, 'GET')
+  const pathSegments = await resolvePathSegments(context)
+  return proxy(request, pathSegments, 'GET')
 }
 
-export async function POST(request: NextRequest, { params }: RouteContext): Promise<Response> {
-  return proxy(request, params.path, 'POST')
+export async function POST(request: NextRequest, context: RouteContext): Promise<Response> {
+  const pathSegments = await resolvePathSegments(context)
+  return proxy(request, pathSegments, 'POST')
 }
 
 export async function PUT(request: NextRequest, context: RouteContext): Promise<Response> {
-  return proxy(request, context.params.path, 'PUT')
+  const pathSegments = await resolvePathSegments(context)
+  return proxy(request, pathSegments, 'PUT')
 }
 
 export async function PATCH(request: NextRequest, context: RouteContext): Promise<Response> {
-  return proxy(request, context.params.path, 'PATCH')
+  const pathSegments = await resolvePathSegments(context)
+  return proxy(request, pathSegments, 'PATCH')
 }
 
 export async function DELETE(request: NextRequest, context: RouteContext): Promise<Response> {
-  return proxy(request, context.params.path, 'DELETE')
+  const pathSegments = await resolvePathSegments(context)
+  return proxy(request, pathSegments, 'DELETE')
 }
