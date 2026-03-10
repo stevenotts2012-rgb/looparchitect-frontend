@@ -2,6 +2,15 @@
 // Connects Next.js frontend to FastAPI backend on Railway
 
 const API_BASE_PATH = '/api';
+const DEFAULT_BACKEND_ORIGIN = 'https://web-production-3afc5.up.railway.app';
+
+function getDirectApiBasePath(): string {
+  const configured = (process.env.NEXT_PUBLIC_API_URL || '').trim();
+  if (configured.startsWith('http://') || configured.startsWith('https://')) {
+    return `${configured.replace(/\/$/, '')}/api`;
+  }
+  return `${DEFAULT_BACKEND_ORIGIN}/api`;
+}
 
 function generateCorrelationId(): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
@@ -623,13 +632,37 @@ export async function uploadLoop(file: File | File[]): Promise<LoopResponse> {
       formData.append('file', files[0]);
     }
 
-    const response = await fetch(`${API_BASE_PATH}/v1/loops/with-file`, {
-      method: 'POST',
-      headers: {
-        'x-correlation-id': correlationId,
-      },
-      body: formData,
-    });
+    const proxyUrl = `${API_BASE_PATH}/v1/loops/with-file`;
+    const directUrl = `${getDirectApiBasePath()}/v1/loops/with-file`;
+
+    let response: Response;
+    try {
+      response = await fetch(proxyUrl, {
+        method: 'POST',
+        headers: {
+          'x-correlation-id': correlationId,
+        },
+        body: formData,
+      });
+    } catch {
+      response = await fetch(directUrl, {
+        method: 'POST',
+        headers: {
+          'x-correlation-id': correlationId,
+        },
+        body: formData,
+      });
+    }
+
+    if (response.status >= 500 && response.url.includes('/api/v1/loops/with-file')) {
+      response = await fetch(directUrl, {
+        method: 'POST',
+        headers: {
+          'x-correlation-id': correlationId,
+        },
+        body: formData,
+      });
+    }
 
     const payload = await handleResponse<LoopResponse>(response);
     console.info('feature_event', {
