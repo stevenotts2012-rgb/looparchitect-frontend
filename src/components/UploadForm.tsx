@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { uploadLoop, LoopArchitectApiError } from '@/../../api/client'
 
 interface UploadFormProps {
@@ -13,6 +13,16 @@ export default function UploadForm({ onUploadSuccess }: UploadFormProps) {
   const [error, setError] = useState<string | null>(null)
   const [detectedRoles, setDetectedRoles] = useState<string[]>([])
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const folderInputRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    if (!folderInputRef.current) {
+      return
+    }
+
+    folderInputRef.current.setAttribute('webkitdirectory', '')
+    folderInputRef.current.setAttribute('directory', '')
+  }, [])
 
   const resetInput = () => {
     if (fileInputRef.current) {
@@ -67,6 +77,10 @@ export default function UploadForm({ onUploadSuccess }: UploadFormProps) {
   }
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    validateAndSetFiles(e.target.files || [])
+  }
+
+  const handleFolderChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     validateAndSetFiles(e.target.files || [])
   }
 
@@ -158,7 +172,7 @@ export default function UploadForm({ onUploadSuccess }: UploadFormProps) {
             htmlFor="file-upload"
             className="cursor-pointer text-blue-400 hover:text-blue-300 font-medium"
           >
-            Choose a file
+            Choose files
           </label>
           <input
             ref={fileInputRef}
@@ -171,10 +185,28 @@ export default function UploadForm({ onUploadSuccess }: UploadFormProps) {
             onChange={handleFileChange}
             disabled={isUploading}
           />
+          <span className="mx-2 text-sm text-gray-500">or</span>
+          <label
+            htmlFor="folder-upload"
+            className="cursor-pointer text-blue-400 hover:text-blue-300 font-medium"
+          >
+            Choose folder
+          </label>
+          <input
+            ref={folderInputRef}
+            id="folder-upload"
+            name="folder-upload"
+            type="file"
+            className="sr-only"
+            accept="audio/*"
+            multiple
+            onChange={handleFolderChange}
+            disabled={isUploading}
+          />
           <p className="mt-1 text-sm text-gray-400">or drag and drop</p>
         </div>
         <p className="mt-2 text-xs text-gray-500">
-          Single loop, multi-stem upload, or one ZIP stem pack · MP3/WAV/OGG/FLAC/ZIP up to 50MB each
+          Single loop, stem folder, multi-stem files, or one ZIP stem pack · MP3/WAV/OGG/FLAC/ZIP up to 50MB each
         </p>
       </div>
 
