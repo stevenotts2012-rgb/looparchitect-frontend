@@ -38,6 +38,18 @@ export interface LoopResponse {
   status?: string;
   processed_file_url?: string;
   analysis_json?: string;
+  stem_metadata?: {
+    enabled?: boolean;
+    backend?: string;
+    succeeded?: boolean;
+    upload_mode?: string;
+    roles_detected?: string[];
+    stems_generated?: string[];
+    stem_s3_keys?: Record<string, string>;
+    source_files?: string[];
+    sample_rate?: number;
+    duration_ms?: number;
+  };
   created_at: string;
 }
 
@@ -576,21 +588,40 @@ export async function validateLoopSource(loopId: number): Promise<void> {
  * @param file - The audio file to upload
  * @returns Promise with the created loop details
  */
-export async function uploadLoop(file: File): Promise<LoopResponse> {
+export async function uploadLoop(file: File | File[]): Promise<LoopResponse> {
   try {
     const correlationId = generateCorrelationId();
     const formData = new FormData();
+    const files = Array.isArray(file) ? file : [file];
+    if (files.length === 0) {
+      throw new LoopArchitectApiError('No upload files provided', 400);
+    }
+
+    const hasZip = files.some((candidate) => candidate.name.toLowerCase().endsWith('.zip'));
+    const hasAudio = files.some((candidate) => !candidate.name.toLowerCase().endsWith('.zip'));
+    if (hasZip && hasAudio) {
+      throw new LoopArchitectApiError('Upload either audio stems or one ZIP stem pack, not both.', 400);
+    }
+    if (hasZip && files.length > 1) {
+      throw new LoopArchitectApiError('Upload exactly one ZIP file for stem-pack ZIP mode.', 400);
+    }
     
     // Create loop metadata with filename as name
     const loopMetadata = {
-      name: file.name,
-      filename: file.name,
+      name: hasZip ? files[0].name.replace(/\.zip$/i, '') : files[0].name,
+      filename: files[0].name,
     };
     
     // Append as JSON string (backend expects loop_in as Form field)
     formData.append('loop_in', JSON.stringify(loopMetadata));
     // Append the audio file
-    formData.append('file', file);
+    if (hasZip) {
+      formData.append('stem_zip', files[0]);
+    } else if (files.length > 1) {
+      files.forEach((stem) => formData.append('stem_files', stem));
+    } else {
+      formData.append('file', files[0]);
+    }
 
     const response = await fetch(`${API_BASE_PATH}/v1/loops/with-file`, {
       method: 'POST',

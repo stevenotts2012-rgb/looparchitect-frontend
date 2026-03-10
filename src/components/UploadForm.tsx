@@ -8,38 +8,71 @@ interface UploadFormProps {
 }
 
 export default function UploadForm({ onUploadSuccess }: UploadFormProps) {
-  const [selectedFile, setSelectedFile] = useState<File | null>(null)
+  const [selectedFiles, setSelectedFiles] = useState<File[]>([])
   const [isUploading, setIsUploading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [detectedRoles, setDetectedRoles] = useState<string[]>([])
   const fileInputRef = useRef<HTMLInputElement>(null)
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (file) {
-      // Validate file type
-      const validTypes = ['audio/mpeg', 'audio/wav', 'audio/mp3', 'audio/ogg', 'audio/flac']
-      if (!validTypes.some(type => file.type.includes(type.split('/')[1]))) {
-        setError('Please select a valid audio file (MP3, WAV, OGG, FLAC)')
-        setSelectedFile(null)
-        return
-      }
-
-      // Validate file size (max 50MB)
-      const maxSize = 50 * 1024 * 1024
-      if (file.size > maxSize) {
-        setError('File size must be less than 50MB')
-        setSelectedFile(null)
-        return
-      }
-
-      setSelectedFile(file)
-      setError(null)
+  const resetInput = () => {
+    if (fileInputRef.current) {
+      fileInputRef.current.value = ''
     }
   }
 
+  const validateAndSetFiles = (filesLike: FileList | File[]) => {
+    const files = Array.from(filesLike)
+    if (files.length === 0) {
+      setSelectedFiles([])
+      return
+    }
+
+    const zipFiles = files.filter((file) => file.name.toLowerCase().endsWith('.zip'))
+    const audioFiles = files.filter((file) => !file.name.toLowerCase().endsWith('.zip'))
+    const validTypes = ['audio/mpeg', 'audio/wav', 'audio/mp3', 'audio/ogg', 'audio/flac']
+
+    if (zipFiles.length > 1 || (zipFiles.length > 0 && audioFiles.length > 0)) {
+      setError('Upload either one ZIP stem pack or one/many audio stems.')
+      setSelectedFiles([])
+      return
+    }
+
+    if (zipFiles.length === 1) {
+      setSelectedFiles(zipFiles)
+      setDetectedRoles([])
+      setError(null)
+      return
+    }
+
+    const invalidAudio = audioFiles.find(
+      (file) => !validTypes.some((type) => file.type.includes(type.split('/')[1])) && !/\.(wav|mp3|ogg|flac)$/i.test(file.name)
+    )
+    if (invalidAudio) {
+      setError('Please select valid audio files (MP3, WAV, OGG, FLAC) or a ZIP stem pack.')
+      setSelectedFiles([])
+      return
+    }
+
+    const maxSize = 50 * 1024 * 1024
+    const oversized = files.find((file) => file.size > maxSize)
+    if (oversized) {
+      setError(`File size must be less than 50MB: ${oversized.name}`)
+      setSelectedFiles([])
+      return
+    }
+
+    setSelectedFiles(audioFiles)
+    setDetectedRoles([])
+    setError(null)
+  }
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    validateAndSetFiles(e.target.files || [])
+  }
+
   const handleUpload = async () => {
-    if (!selectedFile) {
-      setError('Please select a file first')
+    if (selectedFiles.length === 0) {
+      setError('Please select upload files first')
       return
     }
 
@@ -47,14 +80,13 @@ export default function UploadForm({ onUploadSuccess }: UploadFormProps) {
     setError(null)
 
     try {
-      const response = await uploadLoop(selectedFile)
+      const response = await uploadLoop(selectedFiles.length === 1 ? selectedFiles[0] : selectedFiles)
       onUploadSuccess(response.id)
+      setDetectedRoles(response.stem_metadata?.roles_detected || response.stem_metadata?.stems_generated || [])
       
       // Reset form
-      setSelectedFile(null)
-      if (fileInputRef.current) {
-        fileInputRef.current.value = ''
-      }
+      setSelectedFiles([])
+      resetInput()
     } catch (err) {
       if (err instanceof LoopArchitectApiError) {
         setError(err.message)
@@ -75,14 +107,20 @@ export default function UploadForm({ onUploadSuccess }: UploadFormProps) {
     e.preventDefault()
     e.stopPropagation()
 
-    const file = e.dataTransfer.files?.[0]
-    if (file && fileInputRef.current) {
+    const files = e.dataTransfer.files
+    if (files && files.length > 0 && fileInputRef.current) {
       const dataTransfer = new DataTransfer()
-      dataTransfer.items.add(file)
+      Array.from(files).forEach((file) => dataTransfer.items.add(file))
       fileInputRef.current.files = dataTransfer.files
-      handleFileChange({ target: { files: dataTransfer.files } } as any)
+      validateAndSetFiles(dataTransfer.files)
     }
   }
+
+  const uploadModeLabel = selectedFiles.length === 1 && selectedFiles[0]?.name.toLowerCase().endsWith('.zip')
+    ? 'Stem Pack ZIP'
+    : selectedFiles.length > 1
+      ? 'Multi-Stem Pack'
+      : 'Single Loop'
 
   return (
     <div className="w-full max-w-2xl space-y-6">
@@ -119,21 +157,22 @@ export default function UploadForm({ onUploadSuccess }: UploadFormProps) {
             name="file-upload"
             type="file"
             className="sr-only"
-            accept="audio/*"
+            accept="audio/*,.zip"
+            multiple
             onChange={handleFileChange}
             disabled={isUploading}
           />
           <p className="mt-1 text-sm text-gray-400">or drag and drop</p>
         </div>
         <p className="mt-2 text-xs text-gray-500">
-          MP3, WAV, OGG, FLAC up to 50MB
+          Single loop, multi-stem upload, or one ZIP stem pack · MP3/WAV/OGG/FLAC/ZIP up to 50MB each
         </p>
       </div>
 
       {/* Selected File Display */}
-      {selectedFile && (
-        <div className="bg-gray-800 rounded-lg p-4 flex items-center justify-between">
-          <div className="flex items-center space-x-3">
+      {selectedFiles.length > 0 && (
+        <div className="bg-gray-800 rounded-lg p-4 flex items-start justify-between">
+          <div className="flex items-start space-x-3">
             <svg
               className="h-8 w-8 text-blue-400"
               fill="currentColor"
@@ -146,18 +185,23 @@ export default function UploadForm({ onUploadSuccess }: UploadFormProps) {
               />
             </svg>
             <div>
-              <p className="text-white font-medium">{selectedFile.name}</p>
-              <p className="text-sm text-gray-400">
-                {(selectedFile.size / (1024 * 1024)).toFixed(2)} MB
+              <p className="text-white font-medium">{uploadModeLabel}</p>
+              <p className="text-sm text-gray-400 mb-2">
+                {selectedFiles.length} file{selectedFiles.length === 1 ? '' : 's'} selected
               </p>
+              <ul className="space-y-1 text-sm text-gray-300">
+                {selectedFiles.slice(0, 6).map((file) => (
+                  <li key={`${file.name}-${file.size}`}>• {file.name} ({(file.size / (1024 * 1024)).toFixed(2)} MB)</li>
+                ))}
+                {selectedFiles.length > 6 && <li>• +{selectedFiles.length - 6} more</li>}
+              </ul>
             </div>
           </div>
           <button
             onClick={() => {
-              setSelectedFile(null)
-              if (fileInputRef.current) {
-                fileInputRef.current.value = ''
-              }
+              setSelectedFiles([])
+              setDetectedRoles([])
+              resetInput()
             }}
             className="text-gray-400 hover:text-white"
             disabled={isUploading}
@@ -172,6 +216,19 @@ export default function UploadForm({ onUploadSuccess }: UploadFormProps) {
               />
             </svg>
           </button>
+        </div>
+      )}
+
+      {detectedRoles.length > 0 && (
+        <div className="bg-blue-900/30 border border-blue-700 rounded-lg p-4">
+          <p className="text-sm text-blue-200 mb-3 font-medium">Detected stem roles</p>
+          <div className="flex flex-wrap gap-2">
+            {detectedRoles.map((role) => (
+              <span key={role} className="px-3 py-1 rounded-full bg-blue-500/20 text-blue-200 text-xs uppercase tracking-wide">
+                {role}
+              </span>
+            ))}
+          </div>
         </div>
       )}
 
@@ -198,7 +255,7 @@ export default function UploadForm({ onUploadSuccess }: UploadFormProps) {
       {/* Upload Button */}
       <button
         onClick={handleUpload}
-        disabled={!selectedFile || isUploading}
+        disabled={selectedFiles.length === 0 || isUploading}
         className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-gray-700 disabled:cursor-not-allowed text-white font-semibold py-3 px-6 rounded-lg transition-colors duration-200 flex items-center justify-center space-x-2"
       >
         {isUploading ? (
@@ -226,7 +283,7 @@ export default function UploadForm({ onUploadSuccess }: UploadFormProps) {
             <span>Uploading...</span>
           </>
         ) : (
-          <span>Upload Loop</span>
+          <span>{selectedFiles.length > 1 ? 'Upload Stem Pack' : selectedFiles[0]?.name.toLowerCase().endsWith('.zip') ? 'Upload ZIP Stem Pack' : 'Upload Loop'}</span>
         )}
       </button>
     </div>

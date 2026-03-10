@@ -62,7 +62,7 @@ export default function Home() {
               LoopArchitect
             </h1>
             <p className="text-lg md:text-xl text-gray-400 max-w-2xl mx-auto">
-              Upload your audio loop and generate professional arrangements with AI
+              Upload a stereo loop, a full stem pack, or a ZIP of stems and generate producer-style arrangements with AI
             </p>
           </div>
 
@@ -147,7 +147,7 @@ export default function Home() {
               </div>
               <h3 className="text-lg font-semibold text-white mb-2">1. Upload</h3>
               <p className="text-sm text-gray-400">
-                Upload your audio loop file (MP3, WAV, OGG, FLAC)
+                Upload a loop, multi-stem pack, or ZIP stem pack (MP3, WAV, OGG, FLAC, ZIP)
               </p>
             </div>
 
