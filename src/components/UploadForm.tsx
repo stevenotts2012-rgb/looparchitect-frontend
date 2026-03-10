@@ -122,6 +122,15 @@ export default function UploadForm({ onUploadSuccess }: UploadFormProps) {
       ? 'Multi-Stem Pack'
       : 'Single Loop'
 
+  const hasRole = (role: string) => detectedRoles.includes(role)
+  const hasPadsOrHarmony = hasRole('pads') || hasRole('harmony')
+
+  const arrangementPreview = [
+    { name: 'Intro', stems: [hasRole('melody') ? 'melody' : '', hasPadsOrHarmony ? 'pads/harmony' : ''].filter(Boolean) },
+    { name: 'Verse', stems: [hasRole('drums') ? 'drums' : '', hasRole('bass') ? 'bass' : ''].filter(Boolean) },
+    { name: 'Hook', stems: detectedRoles.filter((role) => ['drums', 'bass', 'melody', 'pads', 'harmony', 'fx', 'full_mix'].includes(role)) },
+  ]
+
   return (
     <div className="w-full max-w-2xl space-y-6">
       {/* Drag and Drop Zone */}
@@ -228,6 +237,18 @@ export default function UploadForm({ onUploadSuccess }: UploadFormProps) {
                 {role}
               </span>
             ))}
+          </div>
+          <div className="mt-4 border-t border-blue-700/60 pt-3">
+            <p className="text-xs text-blue-200/90 mb-2 font-medium">Arrangement preview</p>
+            <div className="space-y-1 text-xs text-blue-100">
+              {arrangementPreview.map((section) => (
+                <p key={section.name}>
+                  <span className="font-semibold">{section.name}</span>
+                  {' → '}
+                  {section.stems.length > 0 ? section.stems.join('/') : 'auto'}
+                </p>
+              ))}
+            </div>
           </div>
         </div>
       )}
