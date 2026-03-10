@@ -9,10 +9,15 @@ type AllowedMethod = (typeof ALLOWED_METHODS)[number]
 
 function getBackendOrigin(): string | null {
   const backendOrigin = (process.env.BACKEND_ORIGIN || process.env.NEXT_PUBLIC_API_URL || '').trim()
-  if (!backendOrigin) {
-    return null
+  if (backendOrigin.startsWith('http://') || backendOrigin.startsWith('https://')) {
+    return backendOrigin.replace(/\/$/, '')
   }
-  return backendOrigin.replace(/\/$/, '')
+
+  if (process.env.NODE_ENV !== 'production') {
+    return 'http://localhost:8000'
+  }
+
+  return 'https://web-production-3afc5.up.railway.app'
 }
 
 function buildTargetUrl(request: NextRequest, pathSegments: string[]): string | null {
