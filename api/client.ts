@@ -1,15 +1,19 @@
 // API Client for LoopArchitect Frontend
 // Connects Next.js frontend to FastAPI backend on Railway
 
-const API_BASE_PATH = '/api';
 const DEFAULT_BACKEND_ORIGIN = 'https://web-production-3afc5.up.railway.app';
 
-function getDirectApiBasePath(): string {
+function getApiBasePath(): string {
   const configured = (process.env.NEXT_PUBLIC_API_URL || '').trim();
   if (configured.startsWith('http://') || configured.startsWith('https://')) {
     return `${configured.replace(/\/$/, '')}/api`;
   }
   return `${DEFAULT_BACKEND_ORIGIN}/api`;
+}
+
+function apiUrl(path: string): string {
+  const normalized = path.startsWith('/') ? path : `/${path}`;
+  return `${getApiBasePath()}${normalized}`;
 }
 
 function generateCorrelationId(): string {
@@ -247,7 +251,7 @@ export async function generateArrangement(
     if (options?.useAiParsing !== undefined) requestBody.use_ai_parsing = options.useAiParsing;
     if (options?.producerMoves) requestBody.producer_moves = options.producerMoves;
 
-    const response = await fetch(`${API_BASE_PATH}/v1/arrangements/generate`, {
+    const response = await fetch(apiUrl('/v1/arrangements/generate'), {
       method: 'POST',
       headers: createJsonHeaders(correlationId),
       body: JSON.stringify(requestBody),
@@ -275,7 +279,7 @@ export async function generateArrangement(
 export async function listStylePresets(): Promise<StylePresetResponse[]> {
   try {
     const correlationId = generateCorrelationId();
-    const response = await fetch(`${API_BASE_PATH}/v1/styles`, {
+    const response = await fetch(apiUrl('/v1/styles'), {
       method: 'GET',
       headers: createJsonHeaders(correlationId),
     });
@@ -303,7 +307,7 @@ export async function getArrangementStatus(
 ): Promise<ArrangementStatusResponse> {
   try {
     const correlationId = generateCorrelationId();
-    const response = await fetch(`${API_BASE_PATH}/v1/arrangements/${id}`, {
+    const response = await fetch(apiUrl(`/v1/arrangements/${id}`), {
       method: 'GET',
       headers: createJsonHeaders(correlationId),
     });
@@ -344,7 +348,7 @@ export async function validateStyle(profile: {
 }> {
   try {
     const correlationId = generateCorrelationId();
-    const response = await fetch(`${API_BASE_PATH}/v1/styles/validate`, {
+    const response = await fetch(apiUrl('/v1/styles/validate'), {
       method: 'POST',
       headers: createJsonHeaders(correlationId),
       body: JSON.stringify({ profile }),
@@ -381,7 +385,7 @@ export async function listArrangements(options?: {
 
     const query = params.toString();
     const response = await fetch(
-      `${API_BASE_PATH}/v1/arrangements${query ? `?${query}` : ''}`,
+      `${apiUrl('/v1/arrangements')}${query ? `?${query}` : ''}`,
       {
         method: 'GET',
         headers: createJsonHeaders(correlationId),
@@ -418,7 +422,7 @@ export async function listArrangements(options?: {
 export async function downloadArrangement(id: number): Promise<Blob> {
   try {
     const response = await fetch(
-      `${API_BASE_PATH}/v1/arrangements/${id}/download`,
+      apiUrl(`/v1/arrangements/${id}/download`),
       {
         method: 'GET',
       }
@@ -450,7 +454,7 @@ export async function downloadArrangement(id: number): Promise<Blob> {
 export async function getDawExportInfo(id: number): Promise<DawExportResponse> {
   try {
     const correlationId = generateCorrelationId();
-    const response = await fetch(`${API_BASE_PATH}/v1/arrangements/${id}/daw-export`, {
+    const response = await fetch(apiUrl(`/v1/arrangements/${id}/daw-export`), {
       method: 'GET',
       headers: createJsonHeaders(correlationId),
     });
@@ -475,7 +479,7 @@ export async function downloadDawExport(id: number): Promise<Blob> {
   try {
     const correlationId = generateCorrelationId();
     const response = await fetch(
-      `${API_BASE_PATH}/v1/arrangements/${id}/daw-export/download`,
+      apiUrl(`/v1/arrangements/${id}/daw-export/download`),
       {
         method: 'GET',
         headers: {
@@ -512,7 +516,7 @@ export async function downloadDawExport(id: number): Promise<Blob> {
 export async function getLoop(loopId: number): Promise<LoopResponse> {
   try {
     const correlationId = generateCorrelationId();
-    const response = await fetch(`${API_BASE_PATH}/v1/loops/${loopId}`, {
+    const response = await fetch(apiUrl(`/v1/loops/${loopId}`), {
       method: 'GET',
       headers: createJsonHeaders(correlationId),
     });
@@ -536,7 +540,7 @@ export async function getLoop(loopId: number): Promise<LoopResponse> {
  */
 export async function downloadLoop(loopId: number): Promise<string> {
   try {
-    const response = await fetch(`${API_BASE_PATH}/v1/loops/${loopId}/download`, {
+    const response = await fetch(apiUrl(`/v1/loops/${loopId}/download`), {
       method: 'GET',
     });
 
@@ -567,7 +571,7 @@ export async function downloadLoop(loopId: number): Promise<string> {
 export async function validateLoopSource(loopId: number): Promise<void> {
   try {
     const correlationId = generateCorrelationId();
-    const response = await fetch(`${API_BASE_PATH}/v1/loops/${loopId}/play`, {
+    const response = await fetch(apiUrl(`/v1/loops/${loopId}/play`), {
       method: 'GET',
       headers: createJsonHeaders(correlationId),
     });
@@ -632,37 +636,13 @@ export async function uploadLoop(file: File | File[]): Promise<LoopResponse> {
       formData.append('file', files[0]);
     }
 
-    const proxyUrl = `${API_BASE_PATH}/v1/loops/with-file`;
-    const directUrl = `${getDirectApiBasePath()}/v1/loops/with-file`;
-
-    let response: Response;
-    try {
-      response = await fetch(proxyUrl, {
-        method: 'POST',
-        headers: {
-          'x-correlation-id': correlationId,
-        },
-        body: formData,
-      });
-    } catch {
-      response = await fetch(directUrl, {
-        method: 'POST',
-        headers: {
-          'x-correlation-id': correlationId,
-        },
-        body: formData,
-      });
-    }
-
-    if (response.status >= 500 && response.url.includes('/api/v1/loops/with-file')) {
-      response = await fetch(directUrl, {
-        method: 'POST',
-        headers: {
-          'x-correlation-id': correlationId,
-        },
-        body: formData,
-      });
-    }
+    const response = await fetch(apiUrl('/v1/loops/with-file'), {
+      method: 'POST',
+      headers: {
+        'x-correlation-id': correlationId,
+      },
+      body: formData,
+    });
 
     const payload = await handleResponse<LoopResponse>(response);
     console.info('feature_event', {
@@ -682,6 +662,27 @@ export async function uploadLoop(file: File | File[]): Promise<LoopResponse> {
       500
     );
   }
+}
+
+export async function fetchLoopPlayUrl(loopId: number): Promise<string> {
+  const correlationId = generateCorrelationId();
+  const response = await fetch(apiUrl(`/v1/loops/${loopId}/play`), {
+    method: 'GET',
+    headers: createJsonHeaders(correlationId),
+  });
+
+  if (!response.ok) {
+    throw new LoopArchitectApiError(
+      `Failed to fetch loop: ${response.status} ${response.statusText}`,
+      response.status
+    );
+  }
+
+  const data = await response.json();
+  if (!data?.url || typeof data.url !== 'string') {
+    throw new LoopArchitectApiError('No URL returned from API', 500, data);
+  }
+  return data.url;
 }
 
 // Export error class for external use

@@ -1,4 +1,17 @@
-const API_BASE_PATH = '/api'
+const DEFAULT_BACKEND_ORIGIN = 'https://web-production-3afc5.up.railway.app'
+
+function getApiBasePath(): string {
+  const configured = (process.env.NEXT_PUBLIC_API_URL || '').trim()
+  if (configured.startsWith('http://') || configured.startsWith('https://')) {
+    return `${configured.replace(/\/$/, '')}/api`
+  }
+  return `${DEFAULT_BACKEND_ORIGIN}/api`
+}
+
+function apiUrl(path: string): string {
+  const normalized = path.startsWith('/') ? path : `/${path}`
+  return `${getApiBasePath()}${normalized}`
+}
 
 interface LoopPlayResponse {
   url: string
@@ -17,7 +30,7 @@ export interface LoopResponse {
  * @returns Promise resolving to the audio URL
  */
 export async function fetchLoopPlayUrl(loopId: number): Promise<string> {
-  const url = `${API_BASE_PATH}/v1/loops/${loopId}/play`
+  const url = apiUrl(`/v1/loops/${loopId}/play`)
   console.log(`[API] Fetching play URL for loop ID ${loopId}:`, url)
   
   try {
@@ -52,7 +65,7 @@ export async function fetchLoopPlayUrl(loopId: number): Promise<string> {
  * @returns Promise resolving to loop list
  */
 export async function fetchLoops(): Promise<LoopResponse[]> {
-  return apiFetch<LoopResponse[]>('/api/v1/loops')
+  return apiFetch<LoopResponse[]>('/v1/loops')
 }
 
 /**
@@ -65,7 +78,8 @@ export async function apiFetch<T>(
   endpoint: string,
   options: RequestInit = {}
 ): Promise<T> {
-  const url = endpoint.startsWith('/api/') ? endpoint : `${API_BASE_PATH}${endpoint}`
+  const apiEndpoint = endpoint.startsWith('/api/') ? endpoint.replace(/^\/api/, '') : endpoint
+  const url = apiUrl(apiEndpoint)
   
   try {
     const response = await fetch(url, {

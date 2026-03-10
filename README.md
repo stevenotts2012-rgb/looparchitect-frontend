@@ -109,12 +109,12 @@ looparchitect-frontend/
 Create a `.env.local` file in the root directory:
 
 ```env
-NEXT_PUBLIC_API_URL=https://looparchitect-backend-api.onrender.com
+NEXT_PUBLIC_API_URL=https://web-production-3afc5.up.railway.app
 ```
 
 ## API Integration
 
-The app connects to the FastAPI backend at `/api/v1/loops/19/play` to fetch instrumental previews.
+The app connects to the FastAPI backend via `NEXT_PUBLIC_API_URL`, for example `https://web-production-3afc5.up.railway.app/api/v1/loops/19/play`.
 
 ## Available Scripts
 

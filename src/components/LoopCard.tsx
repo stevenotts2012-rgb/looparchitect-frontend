@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import { fetchLoopPlayUrl } from '@/lib/api'
+import { fetchLoopPlayUrl } from '@/../../api/client'
 import { useAudioManager } from '@/context/AudioManagerContext'
 
 export interface LoopCardData {
