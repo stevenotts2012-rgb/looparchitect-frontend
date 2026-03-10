@@ -172,7 +172,7 @@ export default function UploadForm({ onUploadSuccess }: UploadFormProps) {
             htmlFor="file-upload"
             className="cursor-pointer text-blue-400 hover:text-blue-300 font-medium"
           >
-            Choose files
+            Choose files/stems
           </label>
           <input
             ref={fileInputRef}
