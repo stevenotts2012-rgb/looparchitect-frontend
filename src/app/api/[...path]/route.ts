@@ -26,8 +26,24 @@ function buildTargetUrl(request: NextRequest, pathSegments: string[]): string | 
 }
 
 function forwardRequestHeaders(request: NextRequest): Headers {
-  const headers = new Headers(request.headers)
-  headers.delete('host')
+  const headers = new Headers()
+  const allowed = [
+    'accept',
+    'accept-language',
+    'authorization',
+    'content-type',
+    'cookie',
+    'user-agent',
+    'x-correlation-id',
+  ]
+
+  for (const headerName of allowed) {
+    const value = request.headers.get(headerName)
+    if (value) {
+      headers.set(headerName, value)
+    }
+  }
+
   if (!headers.get('x-correlation-id')) {
     headers.set('x-correlation-id', randomUUID())
   }
@@ -35,27 +51,29 @@ function forwardRequestHeaders(request: NextRequest): Headers {
 }
 
 async function proxy(request: NextRequest, pathSegments: string[], method: AllowedMethod): Promise<Response> {
-  const targetUrl = buildTargetUrl(request, pathSegments)
-  if (!targetUrl) {
-    return Response.json(
-      { error: 'Missing BACKEND_ORIGIN environment variable' },
-      { status: 500 }
-    )
-  }
-
-  const requestHeaders = forwardRequestHeaders(request)
-  const correlationId = requestHeaders.get('x-correlation-id') || randomUUID()
-  const init: RequestInit = {
-    method,
-    headers: requestHeaders,
-    redirect: 'manual',
-  }
-
-  if (method !== 'GET') {
-    init.body = await request.arrayBuffer()
-  }
-
+  let correlationId: string = randomUUID()
   try {
+    const targetUrl = buildTargetUrl(request, pathSegments)
+    if (!targetUrl) {
+      return Response.json(
+        { error: 'Missing BACKEND_ORIGIN environment variable' },
+        { status: 500 }
+      )
+    }
+
+    const requestHeaders = forwardRequestHeaders(request)
+    correlationId = requestHeaders.get('x-correlation-id') || randomUUID()
+    const init: RequestInit & { duplex?: 'half' } = {
+      method,
+      headers: requestHeaders,
+      redirect: 'manual',
+    }
+
+    if (method !== 'GET') {
+      init.body = request.body
+      init.duplex = 'half'
+    }
+
     const upstreamResponse = await fetch(targetUrl, init)
     const responseHeaders = new Headers(upstreamResponse.headers)
     responseHeaders.set('x-correlation-id', correlationId)
