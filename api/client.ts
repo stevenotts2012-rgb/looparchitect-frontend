@@ -62,6 +62,18 @@ export interface LoopResponse {
     source_files?: string[];
     sample_rate?: number;
     duration_ms?: number;
+    warnings?: string[];
+    fallback_to_loop?: boolean;
+    alignment?: {
+      auto_aligned?: boolean;
+      confidence?: number;
+      low_confidence?: boolean;
+      fallback_to_loop?: boolean;
+      reference_offset_ms?: number;
+      original_offsets_ms?: Record<string, number>;
+      adjustments_ms?: Record<string, { trim_ms?: number; pad_ms?: number }>;
+      warnings?: string[];
+    };
   };
   created_at: string;
 }
