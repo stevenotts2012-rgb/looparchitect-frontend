@@ -13,6 +13,11 @@ interface UploadState {
   detectedRoles: string[]
   uploadedLoopId: number | null
   renderPath: string | null
+  uploadWarnings: string[]
+  autoAligned: boolean
+  correctedTiming: boolean
+  requiredTrimPad: boolean
+  stemMisalignmentWarning: string | null
 }
 
 interface UploadFormProps {
@@ -28,6 +33,11 @@ export default function UploadForm({ onUploadSuccess }: UploadFormProps) {
     detectedRoles: [],
     uploadedLoopId: null,
     renderPath: null,
+    uploadWarnings: [],
+    autoAligned: false,
+    correctedTiming: false,
+    requiredTrimPad: false,
+    stemMisalignmentWarning: null,
   })
   const fileInputRef = useRef<HTMLInputElement>(null)
   const folderInputRef = useRef<HTMLInputElement>(null)
@@ -50,6 +60,11 @@ export default function UploadForm({ onUploadSuccess }: UploadFormProps) {
       detectedRoles: [],
       uploadedLoopId: null,
       renderPath: null,
+      uploadWarnings: [],
+      autoAligned: false,
+      correctedTiming: false,
+      requiredTrimPad: false,
+      stemMisalignmentWarning: null,
     }))
     resetInputs()
   }
@@ -138,6 +153,11 @@ export default function UploadForm({ onUploadSuccess }: UploadFormProps) {
       detectedRoles: [],
       uploadedLoopId: null,
       renderPath: null,
+      uploadWarnings: [],
+      autoAligned: false,
+      correctedTiming: false,
+      requiredTrimPad: false,
+      stemMisalignmentWarning: null,
     }))
   }
 
@@ -160,12 +180,37 @@ export default function UploadForm({ onUploadSuccess }: UploadFormProps) {
     try {
       const filesToUpload = state.selectedFiles.length === 1 ? state.selectedFiles[0] : state.selectedFiles
       const response = await uploadLoop(filesToUpload)
+      const stemMetadata = response.stem_metadata
+      const alignment = stemMetadata?.alignment
+      const warnings = stemMetadata?.warnings || alignment?.warnings || []
+      const hasTimingOffsetCorrection = Boolean(
+        alignment?.original_offsets_ms &&
+        Object.values(alignment.original_offsets_ms).some((offset) => Math.abs(offset || 0) > 0)
+      )
+      const hasTrimPadAdjustments = Boolean(
+        alignment?.adjustments_ms &&
+        Object.values(alignment.adjustments_ms).some(
+          (adjustment) => ((adjustment?.trim_ms || 0) > 0 || (adjustment?.pad_ms || 0) > 0)
+        )
+      )
+      const stemUploadMode = stemMetadata?.upload_mode === 'stem_pack'
+      const stemSucceeded = Boolean(stemMetadata?.succeeded) && !Boolean(stemMetadata?.fallback_to_loop)
       
+      const misalignmentWarning =
+        hasTimingOffsetCorrection || hasTrimPadAdjustments
+          ? 'Detected timing offsets between stems. They will be auto-aligned during processing.'
+          : null
+
       setState((prev) => ({
         ...prev,
         uploadedLoopId: response.id,
-        detectedRoles: response.stem_metadata?.roles_detected || response.stem_metadata?.stems_generated || [],
-        renderPath: response.stem_metadata?.upload_mode === 'stem_zip' || response.stem_metadata?.upload_mode === 'stem_files' ? 'stem' : 'loop',
+        detectedRoles: stemMetadata?.roles_detected || stemMetadata?.stems_generated || [],
+        renderPath: stemUploadMode && stemSucceeded ? 'stem' : 'loop',
+        uploadWarnings: warnings,
+        autoAligned: Boolean(alignment?.auto_aligned),
+        correctedTiming: hasTimingOffsetCorrection,
+        requiredTrimPad: hasTrimPadAdjustments,
+        stemMisalignmentWarning: misalignmentWarning,
       }))
       
       onUploadSuccess(response.id)
@@ -275,6 +320,20 @@ export default function UploadForm({ onUploadSuccess }: UploadFormProps) {
               {state.detectedRoles.length > 0 && (
                 <p className="mt-0.5 text-sm text-green-100">
                   Stems detected: <span className="font-semibold">{state.detectedRoles.join(', ')}</span>
+                </p>
+              )}
+              {state.autoAligned && (
+                <p className="mt-0.5 text-sm text-green-100">Stems were auto-aligned.</p>
+              )}
+              {state.correctedTiming && (
+                <p className="mt-0.5 text-sm text-green-100">Detected timing offsets and corrected them.</p>
+              )}
+              {state.requiredTrimPad && (
+                <p className="mt-0.5 text-sm text-green-100">Some stems required trimming/padding.</p>
+              )}
+              {state.uploadWarnings.length > 0 && (
+                <p className="mt-0.5 text-sm text-green-100">
+                  Alignment notes: <span className="font-semibold">{state.uploadWarnings.join(' | ')}</span>
                 </p>
               )}
             </div>
@@ -434,6 +493,20 @@ export default function UploadForm({ onUploadSuccess }: UploadFormProps) {
               />
             </svg>
           </button>
+        </div>
+      )}
+
+      {/* Stem Misalignment Warning */}
+      {state.stemMisalignmentWarning && (
+        <div className="bg-yellow-900/30 border border-yellow-600 rounded-lg p-3 flex items-start space-x-2">
+          <svg className="h-5 w-5 text-yellow-400 flex-shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
+            <path
+              fillRule="evenodd"
+              d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z"
+              clipRule="evenodd"
+            />
+          </svg>
+          <p className="text-sm text-yellow-200">{state.stemMisalignmentWarning}</p>
         </div>
       )}
 
