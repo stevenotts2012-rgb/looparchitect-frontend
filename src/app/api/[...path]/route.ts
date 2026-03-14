@@ -2,6 +2,7 @@ import { NextRequest } from 'next/server'
 import { randomUUID } from 'crypto'
 
 export const runtime = 'nodejs'
+export const dynamic = 'force-dynamic'
 
 const ALLOWED_METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'] as const
 
@@ -72,6 +73,7 @@ async function proxy(request: NextRequest, pathSegments: string[], method: Allow
       method,
       headers: requestHeaders,
       redirect: 'manual',
+      cache: 'no-store',
     }
 
     if (method !== 'GET') {
@@ -82,6 +84,9 @@ async function proxy(request: NextRequest, pathSegments: string[], method: Allow
     const upstreamResponse = await fetch(targetUrl, init)
     const responseHeaders = new Headers(upstreamResponse.headers)
     responseHeaders.set('x-correlation-id', correlationId)
+    responseHeaders.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate')
+    responseHeaders.set('Pragma', 'no-cache')
+    responseHeaders.set('Expires', '0')
 
     return new Response(upstreamResponse.body, {
       status: upstreamResponse.status,
