@@ -73,6 +73,7 @@ export default function GeneratePage() {
   })
 
   const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null)
+  const pollingErrorCountRef = useRef<number>(0)
   const audioUrlRef = useRef<string | null>(null)
   const loopAudioUrlRef = useRef<string | null>(null)
 
@@ -133,6 +134,7 @@ export default function GeneratePage() {
     const pollStatus = async () => {
       try {
         const status = await getArrangementStatus(arrangementId)
+        pollingErrorCountRef.current = 0
         setArrangementStatus(status)
 
         const isFinished =
@@ -168,9 +170,9 @@ export default function GeneratePage() {
         }
       } catch (err) {
         console.error('Error polling status:', err)
-        if (pollingIntervalRef.current) {
-          clearInterval(pollingIntervalRef.current)
-          pollingIntervalRef.current = null
+        pollingErrorCountRef.current += 1
+        if (pollingErrorCountRef.current >= 5) {
+          setError('Temporary connection issue while checking status. Retrying...')
         }
       }
     }

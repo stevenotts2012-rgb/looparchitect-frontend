@@ -321,7 +321,12 @@ export async function getArrangementStatus(
     const correlationId = generateCorrelationId();
     const response = await fetch(apiUrl(`/v1/arrangements/${id}`), {
       method: 'GET',
-      headers: createJsonHeaders(correlationId),
+      headers: {
+        ...createJsonHeaders(correlationId),
+        'Cache-Control': 'no-cache, no-store, max-age=0',
+        Pragma: 'no-cache',
+      },
+      cache: 'no-store',
     });
 
     return handleResponse<ArrangementStatusResponse>(response);
