@@ -4,6 +4,7 @@ import { useState, useEffect, useRef } from 'react'
 import Link from 'next/link'
 import {
   generateArrangement,
+  getArrangementPlan,
   getArrangementStatus,
   getArrangementMetadata,
   downloadArrangement,
@@ -16,6 +17,8 @@ import {
   validateStyle,
   LoopArchitectApiError,
   type Arrangement,
+  type ArrangementPlanResponse,
+  type ArrangementPlanSection,
   type ArrangementStatusResponse,
   type StylePresetResponse,
   type ProducerDebugSection,
@@ -39,6 +42,7 @@ export default function GeneratePage() {
   const [duration, setDuration] = useState<string>('30')
 
   const [isGenerating, setIsGenerating] = useState(false)
+  const [isPlanning, setIsPlanning] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [arrangementId, setArrangementId] = useState<number | null>(null)
   const [arrangementStatus, setArrangementStatus] = useState<ArrangementStatusResponse | null>(null)
@@ -55,6 +59,9 @@ export default function GeneratePage() {
   const [selectedMoves, setSelectedMoves] = useState<string[]>([])
   const [structurePreview, setStructurePreview] = useState<Array<{ name: string; bars: number; energy: number }>>([])
   const [debugReport, setDebugReport] = useState<ProducerDebugSection[] | null>(null)
+  const [aiPlanPreview, setAiPlanPreview] = useState<ArrangementPlanSection[] | null>(null)
+  const [aiPlanMeta, setAiPlanMeta] = useState<ArrangementPlanResponse['planner_meta'] | null>(null)
+  const [aiPlanValidation, setAiPlanValidation] = useState<ArrangementPlanResponse['validation'] | null>(null)
 
   // V2: Natural language style input
   const [styleMode, setStyleMode] = useState<'preset' | 'naturalLanguage'>('preset')
@@ -264,6 +271,9 @@ export default function GeneratePage() {
     setArrangementId(null)
     setArrangementStatus(null)
     setDebugReport(null)
+    setAiPlanPreview(null)
+    setAiPlanMeta(null)
+    setAiPlanValidation(null)
     setError(null)
     if (audioUrl) {
       URL.revokeObjectURL(audioUrl)
@@ -272,6 +282,80 @@ export default function GeneratePage() {
     if (loopAudioUrl) {
       URL.revokeObjectURL(loopAudioUrl)
       setLoopAudioUrl(null)
+    }
+  }
+
+  const previewArrangementPlan = async (
+    loopDetails: Awaited<ReturnType<typeof getLoop>>,
+    loopBpm: number,
+  ) => {
+    const detectedRoles = loopDetails.stem_metadata?.roles_detected || []
+    const inferredSourceType: 'loop' | 'stem_pack' | 'unknown' =
+      detectedRoles.length >= 2 ? 'stem_pack' : 'loop'
+
+    const targetBars = arrangementType === 'bars'
+      ? parseInt(bars, 10)
+      : null
+
+    const plannerUserRequest = [
+      styleMode === 'naturalLanguage' ? styleTextInput.trim() : stylePreset,
+      selectedMoves.length ? `producer moves: ${selectedMoves.join(', ')}` : null,
+    ].filter(Boolean).join('; ')
+
+    const planResponse = await getArrangementPlan({
+      input: {
+        bpm: loopBpm,
+        key: loopDetails.key || loopDetails.musical_key || null,
+        time_signature: null,
+        bars_available: loopDetails.bars || null,
+        genre_hint: loopDetails.genre || null,
+        mood_hint: null,
+        detected_roles: detectedRoles,
+        preferred_structure: null,
+        target_total_bars: targetBars,
+        source_type: inferredSourceType,
+      },
+      user_request: plannerUserRequest || undefined,
+      planner_config: {
+        strict: true,
+        max_sections: 10,
+        allow_full_mix: true,
+      },
+    })
+
+    setAiPlanPreview(planResponse.plan.sections || null)
+    setAiPlanMeta(planResponse.planner_meta)
+    setAiPlanValidation(planResponse.validation)
+  }
+
+  const handlePreviewPlan = async () => {
+    if (!loopId) {
+      setError('Please enter a Loop ID')
+      return
+    }
+
+    const loopIdNum = parseInt(loopId, 10)
+    if (isNaN(loopIdNum) || loopIdNum <= 0) {
+      setError('Loop ID must be a positive number')
+      return
+    }
+
+    setIsPlanning(true)
+    setError(null)
+
+    try {
+      await validateLoopSource(loopIdNum)
+      const loopDetails = await getLoop(loopIdNum)
+      const loopBpm = Number(loopDetails.bpm || loopDetails.tempo || 120)
+      await previewArrangementPlan(loopDetails, loopBpm)
+    } catch (err) {
+      if (err instanceof LoopArchitectApiError) {
+        setError(err.message)
+      } else {
+        setError('Failed to preview AI arrangement plan. Please try again.')
+      }
+    } finally {
+      setIsPlanning(false)
     }
   }
 
@@ -293,6 +377,9 @@ export default function GeneratePage() {
     setArrangementStatus(null)
     setStructurePreview([])
     setDebugReport(null)
+    setAiPlanPreview(null)
+    setAiPlanMeta(null)
+    setAiPlanValidation(null)
     if (audioUrl) {
       URL.revokeObjectURL(audioUrl)
       setAudioUrl(null)
@@ -368,6 +455,16 @@ export default function GeneratePage() {
       // Include producer moves
       if (selectedMoves.length > 0) {
         options.producerMoves = selectedMoves
+      }
+
+      // AI plan preview (best-effort). Do not block render enqueue if planning fails.
+      try {
+        await previewArrangementPlan(loopDetails, loopBpm)
+      } catch (planErr) {
+        console.warn('AI plan preview unavailable, continuing generation:', planErr)
+        setAiPlanPreview(null)
+        setAiPlanMeta(null)
+        setAiPlanValidation(null)
       }
 
       const response = await generateArrangement(loopIdNum, options)
@@ -799,6 +896,55 @@ export default function GeneratePage() {
 
               {/* Generate Button */}
               <button
+                onClick={handlePreviewPlan}
+                disabled={isGenerating || isPlanning || !loopId}
+                className="w-full bg-gray-700 hover:bg-gray-600 disabled:bg-gray-800 disabled:cursor-not-allowed text-white font-semibold py-3 px-6 rounded-lg transition-colors duration-200 flex items-center justify-center space-x-3"
+              >
+                {isPlanning ? (
+                  <>
+                    <svg
+                      className="animate-spin h-5 w-5 text-white"
+                      xmlns="http://www.w3.org/2000/svg"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                    >
+                      <circle
+                        className="opacity-25"
+                        cx="12"
+                        cy="12"
+                        r="10"
+                        stroke="currentColor"
+                        strokeWidth="4"
+                      />
+                      <path
+                        className="opacity-75"
+                        fill="currentColor"
+                        d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+                      />
+                    </svg>
+                    <span>Planning...</span>
+                  </>
+                ) : (
+                  <>
+                    <svg
+                      className="h-5 w-5"
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3"
+                      />
+                    </svg>
+                    <span>Preview AI Plan</span>
+                  </>
+                )}
+              </button>
+
+              <button
                 onClick={handleGenerate}
                 disabled={isGenerating || !loopId}
                 className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-gray-700 disabled:cursor-not-allowed text-white font-semibold py-4 px-6 rounded-lg transition-colors duration-200 flex items-center justify-center space-x-3"
@@ -846,6 +992,43 @@ export default function GeneratePage() {
                   </>
                 )}
               </button>
+
+              {aiPlanPreview && aiPlanPreview.length > 0 && (
+                <div className="bg-gray-800/50 border border-gray-700 rounded-lg p-6 space-y-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <h3 className="text-lg font-semibold text-white">AI Plan Preview</h3>
+                    {aiPlanMeta && (
+                      <span className="text-xs text-gray-400">
+                        {aiPlanMeta.model || 'fallback'} · {aiPlanMeta.latency_ms}ms
+                      </span>
+                    )}
+                  </div>
+
+                  {aiPlanValidation && !aiPlanValidation.valid && aiPlanValidation.errors.length > 0 && (
+                    <div className="bg-yellow-900/40 border border-yellow-700 rounded-md p-3">
+                      <p className="text-xs text-yellow-200">Planner validation warnings: {aiPlanValidation.errors.join('; ')}</p>
+                    </div>
+                  )}
+
+                  <div className="space-y-2">
+                    {aiPlanPreview.map((section) => (
+                      <div key={`${section.index}-${section.type}`} className="bg-gray-900/50 rounded-md p-3">
+                        <div className="flex items-center justify-between gap-2 flex-wrap">
+                          <span className="text-sm text-white font-medium capitalize">
+                            {section.index + 1}. {section.type.replace('_', ' ')}
+                          </span>
+                          <span className="text-xs text-gray-400">
+                            {section.bars} bars · E{section.energy} · {section.density}
+                          </span>
+                        </div>
+                        <p className="text-xs text-gray-400 mt-1">
+                          roles: {section.active_roles.join(', ') || 'none'} · transition: {section.transition_into}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               {structurePreview.length > 0 && (
                 <div className="bg-gray-800/50 border border-gray-700 rounded-lg p-6 space-y-4">
@@ -984,6 +1167,9 @@ export default function GeneratePage() {
                     setArrangementId(null)
                     setArrangementStatus(null)
                     setDebugReport(null)
+                    setAiPlanPreview(null)
+                    setAiPlanMeta(null)
+                    setAiPlanValidation(null)
                     setError(null)
                     if (audioUrl) {
                       URL.revokeObjectURL(audioUrl)

@@ -354,6 +354,49 @@ export interface ArrangementMetadataResponse {
   timeline?: Record<string, unknown>;
 }
 
+export interface ArrangementPlanSection {
+  index: number;
+  type: 'intro' | 'verse' | 'pre_hook' | 'hook' | 'bridge' | 'breakdown' | 'outro';
+  bars: number;
+  energy: number;
+  density: 'sparse' | 'medium' | 'full';
+  active_roles: string[];
+  transition_into:
+    | 'none'
+    | 'drum_fill'
+    | 'fx_rise'
+    | 'fx_hit'
+    | 'mute_drop'
+    | 'bass_drop'
+    | 'vocal_chop'
+    | 'arp_lift'
+    | 'percussion_fill';
+  notes: string;
+}
+
+export interface ArrangementPlanResponse {
+  plan: {
+    structure: string[];
+    total_bars: number;
+    sections: ArrangementPlanSection[];
+    planner_notes: {
+      strategy: string;
+      fallback_used: boolean;
+    };
+  };
+  validation: {
+    valid: boolean;
+    errors: string[];
+    warnings: string[];
+  };
+  planner_meta: {
+    model?: string | null;
+    latency_ms: number;
+    tokens?: number | null;
+    fallback_used: boolean;
+  };
+}
+
 /**
  * Get full metadata and producer debug report for a completed arrangement
  * @param id - The arrangement ID
@@ -381,6 +424,49 @@ export async function getArrangementMetadata(
     }
     throw new LoopArchitectApiError(
       `Failed to get arrangement metadata: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      500
+    );
+  }
+}
+
+/**
+ * Generate AI arrangement plan preview before render starts
+ */
+export async function getArrangementPlan(payload: {
+  input: {
+    bpm?: number | null;
+    key?: string | null;
+    time_signature?: string | null;
+    bars_available?: number | null;
+    genre_hint?: string | null;
+    mood_hint?: string | null;
+    detected_roles: string[];
+    preferred_structure?: string[] | null;
+    target_total_bars?: number | null;
+    source_type: 'loop' | 'stem_pack' | 'unknown';
+  };
+  user_request?: string;
+  planner_config?: {
+    strict?: boolean;
+    max_sections?: number;
+    allow_full_mix?: boolean;
+  };
+}): Promise<ArrangementPlanResponse> {
+  try {
+    const correlationId = generateCorrelationId();
+    const response = await fetch(apiUrl('/v1/arrangements/plan'), {
+      method: 'POST',
+      headers: createJsonHeaders(correlationId),
+      body: JSON.stringify(payload),
+    });
+
+    return handleResponse<ArrangementPlanResponse>(response);
+  } catch (error) {
+    if (error instanceof LoopArchitectApiError) {
+      throw error;
+    }
+    throw new LoopArchitectApiError(
+      `Failed to generate arrangement plan: ${error instanceof Error ? error.message : 'Unknown error'}`,
       500
     );
   }
