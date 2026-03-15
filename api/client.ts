@@ -88,20 +88,30 @@ export interface Arrangement {
   export_s3_key?: string;
   stems_zip_url?: string;
   target_seconds?: number;
+  is_saved?: boolean;
   created_at: string;
   updated_at: string;
 }
 
-export interface GenerateArrangementResponse {
+export interface ArrangementPreviewCandidate {
   arrangement_id: number;
-  loop_id: number;
-  status: string;
+  status: 'queued' | 'pending' | 'processing' | 'done' | 'completed' | 'failed';
   created_at: string;
+  render_job_id?: string;
+  seed_used?: number;
+}
+
+export interface GenerateArrangementResponse {
+  arrangement_id?: number;
+  loop_id: number;
+  status?: string;
+  created_at?: string;
   render_job_ids?: string[];
   seed_used?: number;
   style_preset?: string;
   style_profile?: Record<string, unknown>;
   structure_preview?: Array<{ name: string; bars: number; energy: number }>;
+  candidates?: ArrangementPreviewCandidate[];
 }
 
 export interface StylePresetResponse {
@@ -217,6 +227,7 @@ export async function generateArrangement(
     styleParams?: Record<string, number | string>;
     seed?: number | string;
     variationCount?: number;
+    autoSave?: boolean;
     styleTextInput?: string;
     useAiParsing?: boolean;
     producerMoves?: string[];
@@ -245,6 +256,7 @@ export async function generateArrangement(
       style_params?: Record<string, number | string>;
       seed?: number | string;
       variation_count?: number;
+      auto_save?: boolean;
       style_text_input?: string;
       use_ai_parsing?: boolean;
       producer_moves?: string[];
@@ -261,6 +273,7 @@ export async function generateArrangement(
     if (options?.styleParams) requestBody.style_params = options.styleParams;
     if (options?.seed !== undefined) requestBody.seed = options.seed;
     if (options?.variationCount !== undefined) requestBody.variation_count = options.variationCount;
+    if (options?.autoSave !== undefined) requestBody.auto_save = options.autoSave;
     if (options?.styleTextInput) requestBody.style_text_input = options.styleTextInput;
     if (options?.useAiParsing !== undefined) requestBody.use_ai_parsing = options.useAiParsing;
     if (options?.producerMoves) requestBody.producer_moves = options.producerMoves;
@@ -286,6 +299,26 @@ export async function generateArrangement(
     }
     throw new LoopArchitectApiError(
       `Failed to generate arrangement: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      500
+    );
+  }
+}
+
+export async function saveArrangement(arrangementId: number): Promise<Arrangement> {
+  try {
+    const correlationId = generateCorrelationId();
+    const response = await fetch(apiUrl(`/v1/arrangements/${arrangementId}/save`), {
+      method: 'POST',
+      headers: createJsonHeaders(correlationId),
+    });
+
+    return handleResponse<Arrangement>(response);
+  } catch (error) {
+    if (error instanceof LoopArchitectApiError) {
+      throw error;
+    }
+    throw new LoopArchitectApiError(
+      `Failed to save arrangement: ${error instanceof Error ? error.message : 'Unknown error'}`,
       500
     );
   }

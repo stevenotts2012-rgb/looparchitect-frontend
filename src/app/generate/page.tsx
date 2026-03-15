@@ -4,6 +4,7 @@ import { useState, useEffect, useRef } from 'react'
 import Link from 'next/link'
 import {
   generateArrangement,
+  saveArrangement,
   getArrangementPlan,
   getArrangementStatus,
   getArrangementMetadata,
@@ -20,6 +21,7 @@ import {
   type ArrangementPlanResponse,
   type ArrangementPlanSection,
   type ArrangementStatusResponse,
+  type ArrangementPreviewCandidate,
   type StylePresetResponse,
   type ProducerDebugSection,
 } from '@/../../api/client'
@@ -36,6 +38,12 @@ import { HelpButton } from '@/components/HelpButton'
 import { SimpleStyleProfile } from '@/lib/styleSchema'
 
 export default function GeneratePage() {
+  type PreviewCandidateState = ArrangementPreviewCandidate & {
+    arrangementStatus?: ArrangementStatusResponse | null
+    audioUrl?: string | null
+    isSaved?: boolean
+  }
+
   const [loopId, setLoopId] = useState<string>('')
   const [arrangementType, setArrangementType] = useState<'bars' | 'duration'>('bars')
   const [bars, setBars] = useState<string>('8')
@@ -58,6 +66,8 @@ export default function GeneratePage() {
   const [seed, setSeed] = useState<string>('')
   const [selectedMoves, setSelectedMoves] = useState<string[]>([])
   const [structurePreview, setStructurePreview] = useState<Array<{ name: string; bars: number; energy: number }>>([])
+  const [previewCandidates, setPreviewCandidates] = useState<PreviewCandidateState[]>([])
+  const [selectedPreviewId, setSelectedPreviewId] = useState<number | null>(null)
   const [debugReport, setDebugReport] = useState<ProducerDebugSection[] | null>(null)
   const [aiPlanDraft, setAiPlanDraft] = useState<ArrangementPlanSection[] | null>(null)
   const [aiPlanMeta, setAiPlanMeta] = useState<ArrangementPlanResponse['planner_meta'] | null>(null)
@@ -86,6 +96,18 @@ export default function GeneratePage() {
   const pollingErrorCountRef = useRef<number>(0)
   const audioUrlRef = useRef<string | null>(null)
   const loopAudioUrlRef = useRef<string | null>(null)
+
+  const clearPreviewCandidates = () => {
+    setPreviewCandidates((current) => {
+      current.forEach((candidate) => {
+        if (candidate.audioUrl) {
+          URL.revokeObjectURL(candidate.audioUrl)
+        }
+      })
+      return []
+    })
+    setSelectedPreviewId(null)
+  }
 
   useEffect(() => {
     if (typeof window === 'undefined') return
@@ -140,6 +162,7 @@ export default function GeneratePage() {
   // Poll arrangement status
   useEffect(() => {
     if (!arrangementId) return
+    if (previewCandidates.length > 0) return
 
     const pollStatus = async () => {
       try {
@@ -206,7 +229,76 @@ export default function GeneratePage() {
         clearInterval(pollingIntervalRef.current)
       }
     }
-  }, [arrangementId])
+  }, [arrangementId, previewCandidates.length])
+
+  useEffect(() => {
+    if (previewCandidates.length === 0) return
+
+    const hasPending = previewCandidates.some(
+      (candidate) => candidate.status === 'queued' || candidate.status === 'processing' || candidate.status === 'pending'
+    )
+    if (!hasPending) return
+
+    const pollCandidates = async () => {
+      const nextCandidates = await Promise.all(
+        previewCandidates.map(async (candidate) => {
+          if (!(candidate.status === 'queued' || candidate.status === 'processing' || candidate.status === 'pending')) {
+            return candidate
+          }
+
+          try {
+            const status = await getArrangementStatus(candidate.arrangement_id)
+            let nextAudioUrl = candidate.audioUrl ?? null
+
+            if (!nextAudioUrl && (status.status === 'done' || status.status === 'completed')) {
+              try {
+                const blob = await downloadArrangement(candidate.arrangement_id)
+                nextAudioUrl = URL.createObjectURL(blob)
+              } catch (audioError) {
+                console.error(`Failed to load preview audio for candidate ${candidate.arrangement_id}:`, audioError)
+              }
+            }
+
+            return {
+              ...candidate,
+              status: status.status,
+              arrangementStatus: status,
+              audioUrl: nextAudioUrl,
+            }
+          } catch (statusError) {
+            console.error(`Failed to poll candidate ${candidate.arrangement_id}:`, statusError)
+            return candidate
+          }
+        })
+      )
+
+      setPreviewCandidates(nextCandidates)
+      await loadHistory()
+    }
+
+    pollCandidates()
+    const interval = setInterval(pollCandidates, 3000)
+    return () => clearInterval(interval)
+  }, [previewCandidates])
+
+  useEffect(() => {
+    if (!selectedPreviewId) return
+    const selected = previewCandidates.find((candidate) => candidate.arrangement_id === selectedPreviewId)
+    if (!selected) return
+
+    if (selected.arrangementStatus) {
+      setArrangementId(selected.arrangement_id)
+      setArrangementStatus(selected.arrangementStatus)
+      setAudioUrl(selected.audioUrl ?? null)
+
+      const isDone = selected.arrangementStatus.status === 'done' || selected.arrangementStatus.status === 'completed'
+      if (isDone && loopId && !loopAudioUrl) {
+        downloadLoop(parseInt(loopId, 10))
+          .then((loopUrl) => setLoopAudioUrl(loopUrl))
+          .catch((loopErr) => console.error('Failed to load loop audio:', loopErr))
+      }
+    }
+  }, [selectedPreviewId, previewCandidates, loopId, loopAudioUrl])
 
   useEffect(() => {
     audioUrlRef.current = audioUrl
@@ -225,8 +317,13 @@ export default function GeneratePage() {
       if (loopAudioUrlRef.current) {
         URL.revokeObjectURL(loopAudioUrlRef.current)
       }
+      previewCandidates.forEach((candidate) => {
+        if (candidate.audioUrl) {
+          URL.revokeObjectURL(candidate.audioUrl)
+        }
+      })
     }
-  }, [])
+  }, [previewCandidates])
 
   const handleHistoryRefresh = async () => {
     const loopIdNum = parseInt(historyLoopIdFilter || loopId, 10)
@@ -270,6 +367,7 @@ export default function GeneratePage() {
     setDuration(String(targetSeconds))
     setArrangementId(null)
     setArrangementStatus(null)
+    clearPreviewCandidates()
     setDebugReport(null)
     setAiPlanDraft(null)
     setAiPlanMeta(null)
@@ -375,6 +473,7 @@ export default function GeneratePage() {
     setError(null)
     setArrangementId(null)
     setArrangementStatus(null)
+    clearPreviewCandidates()
     setStructurePreview([])
     setDebugReport(null)
     setAiPlanDraft(null)
@@ -402,6 +501,8 @@ export default function GeneratePage() {
         stylePreset?: string
         styleParams?: Record<string, number | string>
         seed?: number | string
+        variationCount?: number
+        autoSave?: boolean
         styleTextInput?: string
         useAiParsing?: boolean
         producerMoves?: string[]
@@ -458,6 +559,9 @@ export default function GeneratePage() {
         options.producerMoves = selectedMoves
       }
 
+      options.variationCount = 3
+      options.autoSave = false
+
       // AI plan preview (best-effort). Do not block render enqueue if planning fails.
       try {
         await previewArrangementPlan(loopDetails, loopBpm)
@@ -502,7 +606,23 @@ export default function GeneratePage() {
       }
 
       const response = await generateArrangement(loopIdNum, options)
-      setArrangementId(response.arrangement_id)
+      const candidates = (response.candidates && response.candidates.length > 0)
+        ? response.candidates
+        : (response.arrangement_id
+          ? [{
+              arrangement_id: response.arrangement_id,
+              status: (response.status || 'queued') as ArrangementPreviewCandidate['status'],
+              created_at: response.created_at || new Date().toISOString(),
+              render_job_id: response.render_job_ids?.[0],
+              seed_used: response.seed_used,
+            }]
+          : [])
+
+      setPreviewCandidates(candidates)
+      if (candidates.length > 0) {
+        setSelectedPreviewId(candidates[0].arrangement_id)
+        setArrangementId(candidates[0].arrangement_id)
+      }
       setStructurePreview(response.structure_preview || [])
       await loadHistory(loopIdNum)
     } catch (err) {
@@ -518,6 +638,26 @@ export default function GeneratePage() {
       }
     } finally {
       setIsGenerating(false)
+    }
+  }
+
+  const handleSavePreview = async (candidateId: number) => {
+    try {
+      await saveArrangement(candidateId)
+      setPreviewCandidates((current) =>
+        current.map((candidate) =>
+          candidate.arrangement_id === candidateId
+            ? { ...candidate, isSaved: true }
+            : candidate
+        )
+      )
+      await loadHistory()
+    } catch (err) {
+      if (err instanceof LoopArchitectApiError) {
+        setError(err.message)
+      } else {
+        setError('Failed to save arrangement preview.')
+      }
     }
   }
 
@@ -1151,6 +1291,7 @@ export default function GeneratePage() {
             activeArrangementId={arrangementId}
             onRefresh={handleHistoryRefresh}
             onTrack={(selectedArrangementId) => {
+              setSelectedPreviewId(null)
               setArrangementId(selectedArrangementId)
               setError(null)
             }}
@@ -1158,6 +1299,67 @@ export default function GeneratePage() {
             onRetry={handleRetry}
             onFilterChange={handleFilterChange}
           />
+
+          {previewCandidates.length > 0 && (
+            <div className="bg-gray-900/50 border border-gray-800 rounded-lg p-6 space-y-4">
+              <div className="flex items-center justify-between">
+                <h3 className="text-lg font-semibold text-white">Preview Variations</h3>
+                <button
+                  onClick={handleGenerate}
+                  disabled={isGenerating || !loopId}
+                  className="px-3 py-2 text-sm bg-blue-600 hover:bg-blue-700 disabled:bg-gray-700 disabled:cursor-not-allowed text-white rounded-lg transition-colors"
+                >
+                  {isGenerating ? 'Generating...' : 'Generate 3 New Variations'}
+                </button>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                {previewCandidates.map((candidate) => {
+                  const isSelected = selectedPreviewId === candidate.arrangement_id
+                  const isDone = candidate.status === 'done' || candidate.status === 'completed'
+                  const isFailed = candidate.status === 'failed'
+                  return (
+                    <div
+                      key={candidate.arrangement_id}
+                      className={`rounded-lg border p-4 space-y-3 ${isSelected ? 'border-blue-500 bg-blue-950/30' : 'border-gray-700 bg-gray-800/40'}`}
+                    >
+                      <div className="space-y-1">
+                        <p className="text-sm text-white font-medium">Variation #{candidate.arrangement_id}</p>
+                        <p className="text-xs text-gray-400 uppercase">{candidate.status}</p>
+                      </div>
+
+                      {isDone && candidate.audioUrl ? (
+                        <audio controls src={candidate.audioUrl} className="w-full" />
+                      ) : (
+                        <p className={`text-xs ${isFailed ? 'text-red-300' : 'text-gray-400'}`}>
+                          {isFailed ? 'Generation failed.' : 'Preview will appear when render finishes.'}
+                        </p>
+                      )}
+
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => {
+                            setSelectedPreviewId(candidate.arrangement_id)
+                            setError(null)
+                          }}
+                          className="flex-1 px-3 py-2 text-sm bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition-colors"
+                        >
+                          Track
+                        </button>
+                        <button
+                          onClick={() => handleSavePreview(candidate.arrangement_id)}
+                          disabled={!isDone || candidate.isSaved}
+                          className="flex-1 px-3 py-2 text-sm bg-green-600 hover:bg-green-700 disabled:bg-gray-700 disabled:cursor-not-allowed text-white rounded-lg transition-colors"
+                        >
+                          {candidate.isSaved ? 'Saved' : 'Save'}
+                        </button>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          )}
 
           {/* Arrangement Status */}
           {arrangementId && arrangementStatus && (
@@ -1253,6 +1455,7 @@ export default function GeneratePage() {
                   onClick={() => {
                     setArrangementId(null)
                     setArrangementStatus(null)
+                    clearPreviewCandidates()
                     setDebugReport(null)
                     setAiPlanDraft(null)
                     setAiPlanMeta(null)
@@ -1261,6 +1464,10 @@ export default function GeneratePage() {
                     if (audioUrl) {
                       URL.revokeObjectURL(audioUrl)
                       setAudioUrl(null)
+                    }
+                    if (loopAudioUrl) {
+                      URL.revokeObjectURL(loopAudioUrl)
+                      setLoopAudioUrl(null)
                     }
                   }}
                   className="flex-1 bg-gray-700 hover:bg-gray-600 text-white font-semibold py-3 px-6 rounded-lg transition-colors"
