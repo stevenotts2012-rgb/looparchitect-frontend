@@ -220,6 +220,7 @@ export async function generateArrangement(
     styleTextInput?: string;
     useAiParsing?: boolean;
     producerMoves?: string[];
+    arrangementPlan?: ArrangementPlanResponse['plan'];
   }
 ): Promise<GenerateArrangementResponse> {
   try {
@@ -247,6 +248,7 @@ export async function generateArrangement(
       style_text_input?: string;
       use_ai_parsing?: boolean;
       producer_moves?: string[];
+      arrangement_plan?: ArrangementPlanResponse['plan'];
     } = {
       loop_id: loopId,
       target_seconds: targetSeconds,
@@ -262,6 +264,7 @@ export async function generateArrangement(
     if (options?.styleTextInput) requestBody.style_text_input = options.styleTextInput;
     if (options?.useAiParsing !== undefined) requestBody.use_ai_parsing = options.useAiParsing;
     if (options?.producerMoves) requestBody.producer_moves = options.producerMoves;
+    if (options?.arrangementPlan) requestBody.arrangement_plan = options.arrangementPlan;
 
     const response = await fetch(apiUrl('/v1/arrangements/generate'), {
       method: 'POST',

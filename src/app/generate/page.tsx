@@ -59,7 +59,7 @@ export default function GeneratePage() {
   const [selectedMoves, setSelectedMoves] = useState<string[]>([])
   const [structurePreview, setStructurePreview] = useState<Array<{ name: string; bars: number; energy: number }>>([])
   const [debugReport, setDebugReport] = useState<ProducerDebugSection[] | null>(null)
-  const [aiPlanPreview, setAiPlanPreview] = useState<ArrangementPlanSection[] | null>(null)
+  const [aiPlanDraft, setAiPlanDraft] = useState<ArrangementPlanSection[] | null>(null)
   const [aiPlanMeta, setAiPlanMeta] = useState<ArrangementPlanResponse['planner_meta'] | null>(null)
   const [aiPlanValidation, setAiPlanValidation] = useState<ArrangementPlanResponse['validation'] | null>(null)
 
@@ -271,7 +271,7 @@ export default function GeneratePage() {
     setArrangementId(null)
     setArrangementStatus(null)
     setDebugReport(null)
-    setAiPlanPreview(null)
+    setAiPlanDraft(null)
     setAiPlanMeta(null)
     setAiPlanValidation(null)
     setError(null)
@@ -323,7 +323,7 @@ export default function GeneratePage() {
       },
     })
 
-    setAiPlanPreview(planResponse.plan.sections || null)
+    setAiPlanDraft(planResponse.plan.sections || null)
     setAiPlanMeta(planResponse.planner_meta)
     setAiPlanValidation(planResponse.validation)
   }
@@ -377,7 +377,7 @@ export default function GeneratePage() {
     setArrangementStatus(null)
     setStructurePreview([])
     setDebugReport(null)
-    setAiPlanPreview(null)
+    setAiPlanDraft(null)
     setAiPlanMeta(null)
     setAiPlanValidation(null)
     if (audioUrl) {
@@ -405,6 +405,7 @@ export default function GeneratePage() {
         styleTextInput?: string
         useAiParsing?: boolean
         producerMoves?: string[]
+        arrangementPlan?: ArrangementPlanResponse['plan']
       } = {}
       
       if (arrangementType === 'bars') {
@@ -462,9 +463,42 @@ export default function GeneratePage() {
         await previewArrangementPlan(loopDetails, loopBpm)
       } catch (planErr) {
         console.warn('AI plan preview unavailable, continuing generation:', planErr)
-        setAiPlanPreview(null)
+        setAiPlanDraft(null)
         setAiPlanMeta(null)
         setAiPlanValidation(null)
+      }
+
+      // Use edited AI plan as deterministic arrangement input when available
+      if (aiPlanDraft && aiPlanDraft.length > 0) {
+        const cleanedSections = aiPlanDraft.map((section, index) => {
+          const cleanedRoles = Array.from(
+            new Set(
+              (section.active_roles || [])
+                .map((role) => role.trim().toLowerCase())
+                .filter((role) => role.length > 0)
+            )
+          )
+
+          return {
+            ...section,
+            index,
+            bars: Math.max(1, Number(section.bars) || 1),
+            energy: Math.min(5, Math.max(1, Number(section.energy) || 1)),
+            active_roles: cleanedRoles,
+          }
+        })
+
+        const totalBars = cleanedSections.reduce((sum, section) => sum + section.bars, 0)
+
+        options.arrangementPlan = {
+          structure: cleanedSections.map((section) => section.type),
+          total_bars: totalBars,
+          sections: cleanedSections,
+          planner_notes: {
+            strategy: 'User-edited AI plan preview',
+            fallback_used: Boolean(aiPlanMeta?.fallback_used),
+          },
+        }
       }
 
       const response = await generateArrangement(loopIdNum, options)
@@ -993,10 +1027,10 @@ export default function GeneratePage() {
                 )}
               </button>
 
-              {aiPlanPreview && aiPlanPreview.length > 0 && (
+              {aiPlanDraft && aiPlanDraft.length > 0 && (
                 <div className="bg-gray-800/50 border border-gray-700 rounded-lg p-6 space-y-4">
                   <div className="flex items-center justify-between gap-3">
-                    <h3 className="text-lg font-semibold text-white">AI Plan Preview</h3>
+                    <h3 className="text-lg font-semibold text-white">AI Plan Preview (Editable)</h3>
                     {aiPlanMeta && (
                       <span className="text-xs text-gray-400">
                         {aiPlanMeta.model || 'fallback'} · {aiPlanMeta.latency_ms}ms
@@ -1010,20 +1044,73 @@ export default function GeneratePage() {
                     </div>
                   )}
 
-                  <div className="space-y-2">
-                    {aiPlanPreview.map((section) => (
-                      <div key={`${section.index}-${section.type}`} className="bg-gray-900/50 rounded-md p-3">
+                  <div className="space-y-3">
+                    {aiPlanDraft.map((section, idx) => (
+                      <div key={`${section.index}-${section.type}`} className="bg-gray-900/50 rounded-md p-3 space-y-2">
                         <div className="flex items-center justify-between gap-2 flex-wrap">
                           <span className="text-sm text-white font-medium capitalize">
                             {section.index + 1}. {section.type.replace('_', ' ')}
                           </span>
                           <span className="text-xs text-gray-400">
-                            {section.bars} bars · E{section.energy} · {section.density}
+                            {section.density} · {section.transition_into}
                           </span>
                         </div>
-                        <p className="text-xs text-gray-400 mt-1">
-                          roles: {section.active_roles.join(', ') || 'none'} · transition: {section.transition_into}
-                        </p>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                          <label className="text-xs text-gray-400">
+                            Bars
+                            <input
+                              type="number"
+                              min={1}
+                              value={section.bars}
+                              onChange={(e) => {
+                                const next = [...aiPlanDraft]
+                                next[idx] = { ...next[idx], bars: Math.max(1, Number(e.target.value) || 1) }
+                                setAiPlanDraft(next)
+                              }}
+                              className="mt-1 w-full px-2 py-1 bg-gray-800 border border-gray-700 rounded text-white"
+                            />
+                          </label>
+
+                          <label className="text-xs text-gray-400">
+                            Energy (1-5)
+                            <input
+                              type="number"
+                              min={1}
+                              max={5}
+                              value={section.energy}
+                              onChange={(e) => {
+                                const next = [...aiPlanDraft]
+                                next[idx] = {
+                                  ...next[idx],
+                                  energy: Math.min(5, Math.max(1, Number(e.target.value) || 1)),
+                                }
+                                setAiPlanDraft(next)
+                              }}
+                              className="mt-1 w-full px-2 py-1 bg-gray-800 border border-gray-700 rounded text-white"
+                            />
+                          </label>
+
+                          <label className="text-xs text-gray-400">
+                            Roles (comma-separated)
+                            <input
+                              type="text"
+                              value={section.active_roles.join(', ')}
+                              onChange={(e) => {
+                                const parsedRoles = e.target.value
+                                  .split(',')
+                                  .map((role) => role.trim().toLowerCase())
+                                  .filter((role) => role.length > 0)
+                                const next = [...aiPlanDraft]
+                                next[idx] = { ...next[idx], active_roles: parsedRoles }
+                                setAiPlanDraft(next)
+                              }}
+                              className="mt-1 w-full px-2 py-1 bg-gray-800 border border-gray-700 rounded text-white"
+                            />
+                          </label>
+                        </div>
+
+                        <p className="text-xs text-gray-500">{section.notes}</p>
                       </div>
                     ))}
                   </div>
@@ -1167,7 +1254,7 @@ export default function GeneratePage() {
                     setArrangementId(null)
                     setArrangementStatus(null)
                     setDebugReport(null)
-                    setAiPlanPreview(null)
+                    setAiPlanDraft(null)
                     setAiPlanMeta(null)
                     setAiPlanValidation(null)
                     setError(null)
