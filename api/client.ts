@@ -341,6 +341,51 @@ export async function getArrangementStatus(
   }
 }
 
+export interface ProducerDebugSection {
+  section_type: string;
+  active_stem_roles?: string[] | null;
+  transition_events?: string[] | null;
+  difference_from_previous?: { reasons?: string[] } | null;
+}
+
+export interface ArrangementMetadataResponse {
+  arrangement_id: number;
+  producer_debug_report?: ProducerDebugSection[];
+  timeline?: Record<string, unknown>;
+}
+
+/**
+ * Get full metadata and producer debug report for a completed arrangement
+ * @param id - The arrangement ID
+ * @returns Promise with arrangement metadata including producer_debug_report
+ */
+export async function getArrangementMetadata(
+  id: number
+): Promise<ArrangementMetadataResponse> {
+  try {
+    const correlationId = generateCorrelationId();
+    const response = await fetch(apiUrl(`/v1/arrangements/${id}/metadata`), {
+      method: 'GET',
+      headers: {
+        ...createJsonHeaders(correlationId),
+        'Cache-Control': 'no-cache, no-store, max-age=0',
+        Pragma: 'no-cache',
+      },
+      cache: 'no-store',
+    });
+
+    return handleResponse<ArrangementMetadataResponse>(response);
+  } catch (error) {
+    if (error instanceof LoopArchitectApiError) {
+      throw error;
+    }
+    throw new LoopArchitectApiError(
+      `Failed to get arrangement metadata: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      500
+    );
+  }
+}
+
 /**
  * Validate a style profile without generating audio
  * @param profile - The style profile to validate

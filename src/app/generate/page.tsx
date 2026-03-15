@@ -5,6 +5,7 @@ import Link from 'next/link'
 import {
   generateArrangement,
   getArrangementStatus,
+  getArrangementMetadata,
   downloadArrangement,
   downloadDawExport,
   listArrangements,
@@ -17,6 +18,7 @@ import {
   type Arrangement,
   type ArrangementStatusResponse,
   type StylePresetResponse,
+  type ProducerDebugSection,
 } from '@/../../api/client'
 import ArrangementStatus from '@/components/ArrangementStatus'
 import DownloadButton from '@/components/DownloadButton'
@@ -52,6 +54,7 @@ export default function GeneratePage() {
   const [seed, setSeed] = useState<string>('')
   const [selectedMoves, setSelectedMoves] = useState<string[]>([])
   const [structurePreview, setStructurePreview] = useState<Array<{ name: string; bars: number; energy: number }>>([])
+  const [debugReport, setDebugReport] = useState<ProducerDebugSection[] | null>(null)
 
   // V2: Natural language style input
   const [styleMode, setStyleMode] = useState<'preset' | 'naturalLanguage'>('preset')
@@ -166,6 +169,14 @@ export default function GeneratePage() {
             } catch (err) {
               console.error('Failed to load audio preview:', err)
             }
+
+            // Load producer debug report
+            try {
+              const meta = await getArrangementMetadata(arrangementId)
+              setDebugReport(meta.producer_debug_report ?? null)
+            } catch (metaErr) {
+              console.error('Failed to load arrangement metadata:', metaErr)
+            }
           }
         }
       } catch (err) {
@@ -252,6 +263,7 @@ export default function GeneratePage() {
     setDuration(String(targetSeconds))
     setArrangementId(null)
     setArrangementStatus(null)
+    setDebugReport(null)
     setError(null)
     if (audioUrl) {
       URL.revokeObjectURL(audioUrl)
@@ -280,6 +292,7 @@ export default function GeneratePage() {
     setArrangementId(null)
     setArrangementStatus(null)
     setStructurePreview([])
+    setDebugReport(null)
     if (audioUrl) {
       URL.revokeObjectURL(audioUrl)
       setAudioUrl(null)
@@ -926,12 +939,51 @@ export default function GeneratePage() {
                 </div>
               )}
 
+              {/* Producer Debug Report */}
+              {(arrangementStatus.status === 'done' || arrangementStatus.status === 'completed') && debugReport && debugReport.length > 0 && (
+                <div className="bg-gray-900/50 border border-gray-800 rounded-lg p-6 space-y-4">
+                  <h3 className="text-sm font-semibold text-gray-400 uppercase tracking-wider flex items-center gap-2">
+                    <svg className="w-4 h-4 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3" />
+                    </svg>
+                    Producer Logic
+                  </h3>
+                  <div className="space-y-3">
+                    {debugReport.map((section, i) => (
+                      <div key={i} className="bg-gray-800/60 rounded-md p-3 space-y-1.5">
+                        <div className="flex items-center justify-between gap-2 flex-wrap">
+                          <span className="text-sm font-medium text-white capitalize">{section.section_type}</span>
+                          {section.active_stem_roles && section.active_stem_roles.length > 0 && (
+                            <div className="flex flex-wrap gap-1">
+                              {section.active_stem_roles.map((role) => (
+                                <span key={role} className="px-1.5 py-0.5 bg-blue-900/50 text-blue-300 rounded text-xs">{role}</span>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                        {section.difference_from_previous?.reasons && section.difference_from_previous.reasons.length > 0 && (
+                          <ul className="space-y-0.5 pt-0.5">
+                            {section.difference_from_previous.reasons.map((reason, j) => (
+                              <li key={j} className="text-xs text-gray-400 flex items-start gap-1.5">
+                                <span className="text-purple-500 mt-0.5 flex-shrink-0">›</span>
+                                <span>{reason}</span>
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               {/* Actions */}
               <div className="flex flex-col sm:flex-row gap-4">
                 <button
                   onClick={() => {
                     setArrangementId(null)
                     setArrangementStatus(null)
+                    setDebugReport(null)
                     setError(null)
                     if (audioUrl) {
                       URL.revokeObjectURL(audioUrl)
