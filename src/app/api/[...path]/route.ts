@@ -21,7 +21,7 @@ function getBackendOrigin(): string | null {
   return 'https://web-production-3afc5.up.railway.app'
 }
 
-function buildTargetUrl(request: NextRequest, pathSegments: string[]): string | null {
+function buildTargetUrl(request: NextRequest, pathSegments: string[], method: AllowedMethod): string | null {
   const backendOrigin = getBackendOrigin()
   if (!backendOrigin) {
     return null
@@ -29,7 +29,12 @@ function buildTargetUrl(request: NextRequest, pathSegments: string[]): string | 
 
   const normalizedPath = pathSegments.map((segment) => encodeURIComponent(segment)).join('/')
   const hasTrailingSlash = request.nextUrl.pathname.endsWith('/')
-  const suffix = hasTrailingSlash ? '/' : ''
+  const isPostArrangementsCreate =
+    method === 'POST' &&
+    pathSegments.length === 2 &&
+    pathSegments[0] === 'v1' &&
+    pathSegments[1] === 'arrangements'
+  const suffix = hasTrailingSlash || isPostArrangementsCreate ? '/' : ''
   return `${backendOrigin}/api/${normalizedPath}${suffix}${request.nextUrl.search}`
 }
 
@@ -61,7 +66,7 @@ function forwardRequestHeaders(request: NextRequest): Headers {
 async function proxy(request: NextRequest, pathSegments: string[], method: AllowedMethod): Promise<Response> {
   let correlationId: string = randomUUID()
   try {
-    const targetUrl = buildTargetUrl(request, pathSegments)
+    const targetUrl = buildTargetUrl(request, pathSegments, method)
     if (!targetUrl) {
       return Response.json(
         { error: 'Missing BACKEND_ORIGIN environment variable' },
