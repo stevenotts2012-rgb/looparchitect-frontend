@@ -77,8 +77,17 @@ async function proxy(request: NextRequest, pathSegments: string[], method: Allow
     }
 
     if (method !== 'GET') {
-      init.body = request.body
-      init.duplex = 'half'
+      const contentType = request.headers.get('content-type')?.toLowerCase() || ''
+      const isMultipart = contentType.includes('multipart/form-data')
+
+      if (isMultipart) {
+        const formData = await request.formData()
+        init.body = formData
+        requestHeaders.delete('content-type')
+      } else {
+        init.body = request.body
+        init.duplex = 'half'
+      }
     }
 
     const upstreamResponse = await fetch(targetUrl, init)
