@@ -28,7 +28,9 @@ function buildTargetUrl(request: NextRequest, pathSegments: string[]): string | 
   }
 
   const normalizedPath = pathSegments.map((segment) => encodeURIComponent(segment)).join('/')
-  return `${backendOrigin}/api/${normalizedPath}${request.nextUrl.search}`
+  const hasTrailingSlash = request.nextUrl.pathname.endsWith('/')
+  const suffix = hasTrailingSlash ? '/' : ''
+  return `${backendOrigin}/api/${normalizedPath}${suffix}${request.nextUrl.search}`
 }
 
 function forwardRequestHeaders(request: NextRequest): Headers {
