@@ -828,6 +828,24 @@ export async function uploadLoop(file: File | File[]): Promise<LoopResponse> {
       body: formData,
     });
 
+    if (!response.ok && !hasZip && files.length === 1 && response.status >= 500) {
+      const fallbackForm = new FormData();
+      fallbackForm.append('file', files[0]);
+
+      const fallbackUploadResponse = await fetch(apiUrl('/v1/loops/upload'), {
+        method: 'POST',
+        headers: {
+          'x-correlation-id': correlationId,
+        },
+        body: fallbackForm,
+      });
+
+      type UploadFallbackResponse = { loop_id: number };
+      const fallbackPayload = await handleResponse<UploadFallbackResponse>(fallbackUploadResponse);
+      const loopDetails = await getLoop(fallbackPayload.loop_id);
+      return loopDetails;
+    }
+
     const payload = await handleResponse<LoopResponse>(response);
     console.info('feature_event', {
       event: 'loop_created',
