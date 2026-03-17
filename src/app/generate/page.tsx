@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import Link from 'next/link'
 import {
   generateArrangement,
@@ -118,7 +118,7 @@ export default function GeneratePage() {
     }
   }, [])
 
-  const loadHistory = async (requestedLoopId?: number, statusFilter?: string) => {
+  const loadHistory = useCallback(async (requestedLoopId?: number, statusFilter?: string) => {
     setIsHistoryLoading(true)
     setHistoryError(null)
 
@@ -138,11 +138,11 @@ export default function GeneratePage() {
     } finally {
       setIsHistoryLoading(false)
     }
-  }
+  }, [historyStatusFilter])
 
   useEffect(() => {
     loadHistory()
-  }, [])
+  }, [loadHistory])
 
   useEffect(() => {
     const loadStyles = async () => {
@@ -229,7 +229,7 @@ export default function GeneratePage() {
         clearInterval(pollingIntervalRef.current)
       }
     }
-  }, [arrangementId, previewCandidates.length])
+  }, [arrangementId, loadHistory, loopId, previewCandidates.length])
 
   useEffect(() => {
     if (previewCandidates.length === 0) return
@@ -279,7 +279,7 @@ export default function GeneratePage() {
     pollCandidates()
     const interval = setInterval(pollCandidates, 3000)
     return () => clearInterval(interval)
-  }, [previewCandidates])
+  }, [loadHistory, previewCandidates])
 
   useEffect(() => {
     if (!selectedPreviewId) return

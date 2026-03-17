@@ -112,7 +112,7 @@ export const ProducerControls: React.FC<ProducerControlsProps> = ({
           rows={3}
         />
         <div className="mt-2 text-xs text-gray-500">
-          💡 Examples: "Lil Baby trap", "Hans Zimmer cinematic", "Afrobeats percussive", "Drake R&B"
+          💡 Examples: &quot;Lil Baby trap&quot;, &quot;Hans Zimmer cinematic&quot;, &quot;Afrobeats percussive&quot;, &quot;Drake R&amp;B&quot;
         </div>
       </div>
 

@@ -318,9 +318,9 @@ export function ProducerMoves({
             <div className="font-semibold mb-1">How Producer Moves Work:</div>
             <ul className="space-y-1 text-xs">
               <li>✓ Engine automatically places moves at optimal positions</li>
-              <li>✓ Moves adapt to your loop's detected components (kick, bass, melody, etc.)</li>
+              <li>✓ Moves adapt to your loop&apos;s detected components (kick, bass, melody, etc.)</li>
               <li>✓ Multiple moves work together intelligently</li>
-              <li>✓ Disable moves you don't want in your arrangement</li>
+              <li>✓ Disable moves you don&apos;t want in your arrangement</li>
             </ul>
           </div>
         </div>

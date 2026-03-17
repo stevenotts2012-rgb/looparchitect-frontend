@@ -1,10 +1,24 @@
 const DEFAULT_BACKEND_ORIGIN = 'https://web-production-3afc5.up.railway.app'
 
 function getApiBasePath(): string {
-  const configured = (process.env.NEXT_PUBLIC_API_URL || '').trim()
+  // In the browser, use a relative path so all API calls are routed through
+  // the Next.js API proxy route (src/app/api/[...path]/route.ts), which then
+  // forwards the request to the backend on the server side. This avoids CORS
+  // issues because the browser never makes a request directly to the backend.
+  if (typeof window !== 'undefined') {
+    return '/api'
+  }
+
+  // Server-side: resolve the backend origin directly.
+  const configured = (process.env.BACKEND_ORIGIN || process.env.NEXT_PUBLIC_API_URL || '').trim()
   if (configured.startsWith('http://') || configured.startsWith('https://')) {
     return `${configured.replace(/\/$/, '')}/api`
   }
+
+  if (process.env.NODE_ENV !== 'production') {
+    return 'http://localhost:8000/api'
+  }
+
   return `${DEFAULT_BACKEND_ORIGIN}/api`
 }
 
