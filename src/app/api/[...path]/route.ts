@@ -9,7 +9,10 @@ const ALLOWED_METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'] as const
 type AllowedMethod = (typeof ALLOWED_METHODS)[number]
 
 function getBackendOrigin(): string | null {
-  const backendOrigin = (process.env.BACKEND_ORIGIN || process.env.NEXT_PUBLIC_API_URL || '').trim()
+  // Only use BACKEND_ORIGIN (a server-side-only variable) to avoid accidentally
+  // using NEXT_PUBLIC_API_URL which may point to the frontend itself and cause
+  // an infinite proxy loop.
+  const backendOrigin = (process.env.BACKEND_ORIGIN || '').trim()
   if (backendOrigin.startsWith('http://') || backendOrigin.startsWith('https://')) {
     return backendOrigin.replace(/\/$/, '')
   }

@@ -143,10 +143,10 @@ export function StyleTextInput({
           💡 Example styles
         </summary>
         <ul className="mt-2 ml-4 text-xs text-gray-600 space-y-1">
-          <li>• "Dark trap with aggressive 808s"</li>
-          <li>• "Cinematic orchestral with electronic elements"</li>
-          <li>• "Chill synthwave vibe"</li>
-          <li>• "Drill beat, Southside type, beat switch"</li>
+          <li>• &quot;Dark trap with aggressive 808s&quot;</li>
+          <li>• &quot;Cinematic orchestral with electronic elements&quot;</li>
+          <li>• &quot;Chill synthwave vibe&quot;</li>
+          <li>• &quot;Drill beat, Southside type, beat switch&quot;</li>
         </ul>
       </details>
     </div>
