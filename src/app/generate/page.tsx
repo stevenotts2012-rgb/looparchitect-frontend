@@ -98,6 +98,9 @@ export default function GeneratePage() {
   const loopAudioUrlRef = useRef<string | null>(null)
   // Tracks current candidates for use in cleanup (avoids stale closure in unmount effect)
   const previewCandidatesRef = useRef<PreviewCandidateState[]>([])
+  // Holds the candidates-polling interval handle so we can stop it early once all
+  // candidates reach a terminal state (done/failed/completed).
+  const candidatesIntervalRef = useRef<NodeJS.Timeout | null>(null)
 
   const clearPreviewCandidates = () => {
     setPreviewCandidates((current) => {
@@ -260,7 +263,15 @@ export default function GeneratePage() {
       const hasPending = current.some(
         (c) => c.status === 'queued' || c.status === 'processing' || c.status === 'pending'
       )
-      if (!hasPending) return
+      if (!hasPending) {
+        // All candidates are in a terminal state – stop the interval now rather
+        // than letting it run no-op checks every 3 seconds.
+        if (candidatesIntervalRef.current) {
+          clearInterval(candidatesIntervalRef.current)
+          candidatesIntervalRef.current = null
+        }
+        return
+      }
 
       console.log('[LoopArchitect] Polling', current.length, 'candidate(s)')
       const nextCandidates = await Promise.all(
@@ -304,7 +315,11 @@ export default function GeneratePage() {
 
     pollCandidates()
     const interval = setInterval(pollCandidates, 3000)
-    return () => clearInterval(interval)
+    candidatesIntervalRef.current = interval
+    return () => {
+      clearInterval(interval)
+      candidatesIntervalRef.current = null
+    }
     // IMPORTANT: only `previewCandidates.length` (not the full array) is listed
     // as a dependency so that status changes inside the array do NOT restart this
     // effect.  The ref (`previewCandidatesRef`) is kept in sync separately and
@@ -1384,21 +1399,56 @@ export default function GeneratePage() {
                   const isSelected = selectedPreviewId === candidate.arrangement_id
                   const isDone = candidate.status === 'done' || candidate.status === 'completed'
                   const isFailed = candidate.status === 'failed'
+                  const isPending =
+                    candidate.status === 'queued' ||
+                    candidate.status === 'pending' ||
+                    candidate.status === 'processing'
+
+                  const statusLabel = () => {
+                    switch (candidate.status) {
+                      case 'queued': return 'Queued'
+                      case 'pending': return 'Preparing'
+                      case 'processing': return 'Rendering…'
+                      case 'done':
+                      case 'completed': return 'Ready'
+                      case 'failed': return 'Failed'
+                      default: return candidate.status
+                    }
+                  }
+
+                  const statusChipClass = () => {
+                    if (isDone) return 'text-green-400 bg-green-900/30 border border-green-800'
+                    if (isFailed) return 'text-red-400 bg-red-900/30 border border-red-800'
+                    return 'text-yellow-300 bg-yellow-900/20 border border-yellow-800'
+                  }
+
                   return (
                     <div
                       key={candidate.arrangement_id}
                       className={`rounded-lg border p-4 space-y-3 ${isSelected ? 'border-blue-500 bg-blue-950/30' : 'border-gray-700 bg-gray-800/40'}`}
                     >
-                      <div className="space-y-1">
+                      <div className="flex items-center justify-between gap-2">
                         <p className="text-sm text-white font-medium">Variation #{candidate.arrangement_id}</p>
-                        <p className="text-xs text-gray-400 uppercase">{candidate.status}</p>
+                        <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${statusChipClass()}`}>
+                          {statusLabel()}
+                        </span>
                       </div>
 
                       {isDone && candidate.audioUrl ? (
                         <audio controls src={candidate.audioUrl} className="w-full" />
+                      ) : isDone && !candidate.audioUrl ? (
+                        <div className="flex items-center gap-2 text-xs text-gray-400">
+                          <svg className="animate-spin h-3 w-3 text-blue-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" aria-hidden="true">
+                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                          </svg>
+                          Loading preview…
+                        </div>
+                      ) : isFailed ? (
+                        <p className="text-xs text-red-300">Generation failed. Try generating a new variation.</p>
                       ) : (
-                        <p className={`text-xs ${isFailed ? 'text-red-300' : 'text-gray-400'}`}>
-                          {isFailed ? 'Generation failed.' : 'Preview will appear when render finishes.'}
+                        <p className="text-xs text-gray-400">
+                          {isPending ? 'Rendering — preview will appear when ready.' : 'Preview will appear when render finishes.'}
                         </p>
                       )}
 
@@ -1433,17 +1483,40 @@ export default function GeneratePage() {
               <ArrangementStatus arrangement={arrangementStatus} />
 
               {/* Audio Waveform Preview */}
-              {(arrangementStatus.status === 'done' || arrangementStatus.status === 'completed') && audioUrl && (
+              {(arrangementStatus.status === 'done' || arrangementStatus.status === 'completed') && (
                 <div className="bg-gray-900/50 border border-gray-800 rounded-lg p-6">
-                  {loopAudioUrl ? (
-                    <BeforeAfterComparison
-                      beforeUrl={loopAudioUrl}
-                      afterUrl={audioUrl}
-                      beforeTitle="Original Loop"
-                      afterTitle="Generated Arrangement"
-                    />
+                  {audioUrl ? (
+                    loopAudioUrl ? (
+                      <BeforeAfterComparison
+                        beforeUrl={loopAudioUrl}
+                        afterUrl={audioUrl}
+                        beforeTitle="Original Loop"
+                        afterTitle="Generated Arrangement"
+                      />
+                    ) : (
+                      <WaveformViewer audioUrl={audioUrl} title="Preview Your Arrangement" />
+                    )
                   ) : (
-                    <WaveformViewer audioUrl={audioUrl} title="Preview Your Arrangement" />
+                    /* Skeleton player while audio blob download is in progress */
+                    <div className="space-y-4" aria-label="Preparing audio preview">
+                      <div className="flex items-center justify-between">
+                        <h3 className="text-lg font-semibold text-white">Preview Your Arrangement</h3>
+                        <span className="text-sm text-gray-400">Preparing preview…</span>
+                      </div>
+                      <div className="bg-gray-900/80 border border-gray-700 rounded-lg h-[100px] flex items-center justify-center gap-3">
+                        <svg
+                          className="animate-spin h-5 w-5 text-blue-500"
+                          xmlns="http://www.w3.org/2000/svg"
+                          fill="none"
+                          viewBox="0 0 24 24"
+                          aria-hidden="true"
+                        >
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                        </svg>
+                        <span className="text-sm text-gray-400">Loading audio…</span>
+                      </div>
+                    </div>
                   )}
                 </div>
               )}

@@ -89,10 +89,11 @@ export default function ArrangementStatus({ arrangement }: ArrangementStatusProp
   const getStatusText = (status: string) => {
     switch (status) {
       case 'queued':
+        return 'Queued — waiting for a worker…'
       case 'pending':
-        return 'Waiting in queue...'
+        return 'Preparing…'
       case 'processing':
-        return 'Generating arrangement...'
+        return 'Rendering arrangement…'
       case 'done':
       case 'completed':
         return 'Arrangement ready!'
@@ -172,10 +173,13 @@ export default function ArrangementStatus({ arrangement }: ArrangementStatusProp
       {/* Additional Info */}
       <div className="mt-4 text-center text-sm text-gray-400">
         {arrangement.status === 'processing' && (
-          <p>This may take a few minutes. Status updates every 3 seconds.</p>
+          <p>Rendering your arrangement. Status updates every 3 seconds.</p>
         )}
         {arrangement.status === 'pending' && (
-          <p>Your request is in the queue and will be processed shortly.</p>
+          <p>Your request is being prepared for processing.</p>
+        )}
+        {arrangement.status === 'queued' && (
+          <p>Your request is queued and will start shortly.</p>
         )}
       </div>
     </div>
