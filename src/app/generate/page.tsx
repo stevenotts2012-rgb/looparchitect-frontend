@@ -1524,7 +1524,7 @@ export default function GeneratePage() {
               {/* Download Button */}
               {(arrangementStatus.status === 'done' || arrangementStatus.status === 'completed') && (
                 <div className="flex flex-col sm:flex-row gap-4">
-                  <DownloadButton arrangementId={arrangementId} />
+                  <DownloadButton arrangementId={arrangementId} downloadUrl={arrangementStatus.output_url} />
                   <DawExportButton arrangementId={arrangementId} />
                 </div>
               )}

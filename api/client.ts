@@ -636,19 +636,31 @@ export async function listArrangements(options?: {
   }
 }
 
+const DOWNLOAD_TIMEOUT_MS = 30_000;
+
 /**
  * Download a completed arrangement
  * @param id - The arrangement ID
  * @returns Promise with the audio file as a Blob
  */
 export async function downloadArrangement(id: number): Promise<Blob> {
+  const endpoint = apiUrl(`/v1/arrangements/${id}/download`);
+  console.debug('[LoopArchitect] downloadArrangement – endpoint called', { id, endpoint });
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), DOWNLOAD_TIMEOUT_MS);
+
   try {
-    const response = await fetch(
-      apiUrl(`/v1/arrangements/${id}/download`),
-      {
-        method: 'GET',
-      }
-    );
+    const response = await fetch(endpoint, {
+      method: 'GET',
+      signal: controller.signal,
+    });
+
+    console.debug('[LoopArchitect] downloadArrangement – response status', {
+      id,
+      status: response.status,
+      ok: response.ok,
+    });
 
     if (!response.ok) {
       let errorMessage = `Download failed: ${response.status} ${response.statusText}`;
@@ -661,15 +673,33 @@ export async function downloadArrangement(id: number): Promise<Blob> {
       throw new LoopArchitectApiError(errorMessage, response.status);
     }
 
-    return response.blob();
+    const blob = await response.blob();
+    console.debug('[LoopArchitect] downloadArrangement – blob received', {
+      id,
+      size: blob.size,
+      type: blob.type,
+    });
+    return blob;
   } catch (error) {
     if (error instanceof LoopArchitectApiError) {
       throw error;
+    }
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      console.warn('[LoopArchitect] downloadArrangement – timed out', {
+        id,
+        timeoutMs: DOWNLOAD_TIMEOUT_MS,
+      });
+      throw new LoopArchitectApiError(
+        `Download timed out after ${DOWNLOAD_TIMEOUT_MS / 1000} seconds. Please try again.`,
+        408
+      );
     }
     throw new LoopArchitectApiError(
       `Failed to download arrangement: ${error instanceof Error ? error.message : 'Unknown error'}`,
       500
     );
+  } finally {
+    clearTimeout(timeoutId);
   }
 }
 
