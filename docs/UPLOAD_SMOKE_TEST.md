@@ -20,7 +20,7 @@ Run this after any change to `api/client.ts`, `getUploadUrl`, CORS headers, or t
 3. Click **Upload**.
 
 **Expected Network tab behaviour:**
-- One `POST` request to `https://web-production-3afc5.up.railway.app/api/v1/loops/with-file` (or your configured `NEXT_PUBLIC_API_URL` origin).
+- One `POST` request to `${NEXT_PUBLIC_API_URL}/api/v1/loops/with-file` — defaults to `https://web-production-3afc5.up.railway.app` when the env var is not set.
 - **No** preflight `OPTIONS` request before it.
 - Request **Content-Type** header: `multipart/form-data; boundary=…` — set automatically by the browser, **not** manually.
 - Request **headers**: no `x-correlation-id`.
@@ -65,7 +65,7 @@ Run this after any change to `api/client.ts`, `getUploadUrl`, CORS headers, or t
 
 | Symptom | Likely cause |
 |---------|-------------|
-| Upload goes to `/api/v1/loops/with-file` (relative path) | `getUploadUrl` was accidentally replaced with `apiUrl` |
+| Upload goes to the **current origin** (`https://your-vercel-domain.vercel.app/api/v1/loops/with-file`) instead of the Railway origin | `getUploadUrl` was accidentally replaced with `apiUrl` (which returns a relative path that resolves to the Vercel frontend) |
 | `OPTIONS` preflight before every upload | A custom header (`x-correlation-id`, etc.) was re-added, or `Content-Type` was set manually |
 | `413 Request Entity Too Large` | Request is going through the Vercel proxy instead of Railway |
 | `CORS` error in console | Origin misconfigured, or preflight was triggered and Railway rejected it |
