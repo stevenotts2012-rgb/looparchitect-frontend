@@ -1670,6 +1670,7 @@ export default function GeneratePage() {
                           <button
                             onClick={() => handleRetryPreview(candidate.arrangement_id)}
                             className="text-xs text-blue-400 hover:text-blue-300 underline"
+                            aria-label={`Retry preview for arrangement ${candidate.arrangement_id}`}
                           >
                             Retry preview
                           </button>
@@ -1690,6 +1691,7 @@ export default function GeneratePage() {
                                 <button
                                   onClick={() => handleRetryPreview(candidate.arrangement_id)}
                                   className="text-xs text-blue-400 hover:text-blue-300 underline"
+                                  aria-label={`Retry preview for arrangement ${candidate.arrangement_id}`}
                                 >
                                   Retry preview
                                 </button>
@@ -1764,8 +1766,9 @@ export default function GeneratePage() {
                       <div className="flex items-center justify-between flex-wrap gap-3">
                         <h3 className="text-lg font-semibold text-white">Preview Your Arrangement</h3>
                         <button
-                          onClick={() => arrangementId && handleRetryPreview(arrangementId)}
+                          onClick={() => arrangementId !== null && arrangementId !== undefined && handleRetryPreview(arrangementId)}
                           className="text-sm text-blue-400 hover:text-blue-300 underline"
+                          aria-label="Retry preview for this arrangement"
                         >
                           Retry preview
                         </button>
