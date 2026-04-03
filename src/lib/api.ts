@@ -1,3 +1,16 @@
+// ⚠️  DEPRECATION NOTICE
+// The helpers in this file (getApiBasePath / apiUrl / apiFetch / fetchLoopPlayUrl)
+// are an older, partial copy of the functions in api/client.ts.
+//
+// For new code – and especially for ANY upload logic – always import from
+// api/client.ts.  The `getApiBasePath` below returns a relative "/api" path
+// for browser calls, which routes through the Vercel proxy.  That is
+// intentional for lightweight JSON requests but MUST NOT be used for
+// multipart uploads: Vercel's body-size limit causes 413 errors and the proxy
+// adds x-correlation-id, triggering a CORS preflight that blocks uploads.
+//
+// Upload URL resolution lives exclusively in `getUploadUrl()` in api/client.ts.
+
 const DEFAULT_BACKEND_ORIGIN = 'https://web-production-3afc5.up.railway.app'
 
 function getApiBasePath(): string {
@@ -5,6 +18,9 @@ function getApiBasePath(): string {
   // the Next.js API proxy route (src/app/api/[...path]/route.ts), which then
   // forwards the request to the backend on the server side. This avoids CORS
   // issues because the browser never makes a request directly to the backend.
+  //
+  // NOTE: This path must NEVER be used for multipart uploads – see the
+  // deprecation notice at the top of this file.
   if (typeof window !== 'undefined') {
     return '/api'
   }
