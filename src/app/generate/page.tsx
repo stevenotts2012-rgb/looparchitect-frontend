@@ -15,6 +15,7 @@ import {
   getLoop,
   downloadLoop,
   validateStyle,
+  retryPreviewRender,
   LoopArchitectApiError,
   type Arrangement,
   type ArrangementPlanResponse,
@@ -213,36 +214,50 @@ export default function GeneratePage() {
           if (status.status === 'done' || status.status === 'completed') {
             // Only attempt the download if we haven't already succeeded or exhausted retries.
             if (!audioUrlRef.current && !audioUnavailable) {
-              const attempts = audioDownloadAttemptsRef.current
-              if (attempts >= MAX_PREVIEW_DOWNLOAD_ATTEMPTS) {
-                console.warn('[LoopArchitect] max-attempts-reached – marking main preview as unavailable')
-                setAudioUnavailable(true)
+              // PRIMARY PATH: use preview_url or output_url directly when the backend
+              // provides a servable URL.  This avoids the blob download round-trip that
+              // can fail due to timeouts, 404s from ephemeral storage, or missing render
+              // output.  The direct URL works whether the file lives on a mounted volume,
+              // an S3 bucket, or a static-files directory.
+              const directUrl = status.preview_url || status.output_url
+              if (directUrl) {
+                console.log('[LoopArchitect] Using direct preview URL for', arrangementId, ':', directUrl)
+                audioDownloadAttemptsRef.current = 0
+                setAudioUrl(directUrl)
               } else {
-                audioDownloadAttemptsRef.current = attempts + 1
-                console.log('[LoopArchitect] Arrangement done – downloading audio for', arrangementId, `(attempt ${attempts + 1}/${MAX_PREVIEW_DOWNLOAD_ATTEMPTS})`)
-                try {
-                  const blob = await downloadArrangement(arrangementId)
-                  const url = URL.createObjectURL(blob)
-                  console.log('[LoopArchitect] Audio blob URL created:', url)
-                  // Reset counter on success so we don't wrongly skip future arrangements.
-                  audioDownloadAttemptsRef.current = 0
-                  setAudioUrl(url)
-
-                  // Also load the original loop audio for comparison
-                  if (loopId) {
-                    try {
-                      const loopUrl = await downloadLoop(parseInt(loopId))
-                      setLoopAudioUrl(loopUrl)
-                    } catch (loopErr) {
-                      console.error('Failed to load loop audio:', loopErr)
+                // FALLBACK PATH: blob download via /download endpoint.
+                const attempts = audioDownloadAttemptsRef.current
+                if (attempts >= MAX_PREVIEW_DOWNLOAD_ATTEMPTS) {
+                  console.warn('[LoopArchitect] max-attempts-reached – marking main preview as unavailable')
+                  setAudioUnavailable(true)
+                } else {
+                  audioDownloadAttemptsRef.current = attempts + 1
+                  console.log('[LoopArchitect] Arrangement done – downloading audio for', arrangementId, `(attempt ${attempts + 1}/${MAX_PREVIEW_DOWNLOAD_ATTEMPTS})`)
+                  try {
+                    const blob = await downloadArrangement(arrangementId)
+                    const url = URL.createObjectURL(blob)
+                    console.log('[LoopArchitect] Audio blob URL created:', url)
+                    // Reset counter on success so we don't wrongly skip future arrangements.
+                    audioDownloadAttemptsRef.current = 0
+                    setAudioUrl(url)
+                  } catch (err) {
+                    console.error('[LoopArchitect] Failed to load audio preview (attempt', audioDownloadAttemptsRef.current, '):', err)
+                    if (audioDownloadAttemptsRef.current >= MAX_PREVIEW_DOWNLOAD_ATTEMPTS) {
+                      console.warn('[LoopArchitect] max-attempts-reached – marking main preview as unavailable')
+                      setAudioUnavailable(true)
                     }
                   }
-                } catch (err) {
-                  console.error('[LoopArchitect] Failed to load audio preview (attempt', audioDownloadAttemptsRef.current, '):', err)
-                  if (audioDownloadAttemptsRef.current >= MAX_PREVIEW_DOWNLOAD_ATTEMPTS) {
-                    console.warn('[LoopArchitect] max-attempts-reached – marking main preview as unavailable')
-                    setAudioUnavailable(true)
-                  }
+                }
+              }
+
+              // Load the original loop audio for before/after comparison once we
+              // have (or are about to have) a preview URL – regardless of path taken.
+              if (loopId) {
+                try {
+                  const loopUrl = await downloadLoop(parseInt(loopId))
+                  setLoopAudioUrl(loopUrl)
+                } catch (loopErr) {
+                  console.error('Failed to load loop audio:', loopErr)
                 }
               }
             }
@@ -340,6 +355,20 @@ export default function GeneratePage() {
           // The candidate status is already done/completed; we only need to
           // (re)attempt downloading the audio blob.
           if (needsAudio) {
+            // Check if the cached arrangementStatus already has a direct URL we
+            // can use without a round-trip download.
+            const cachedDirectUrl =
+              candidate.arrangementStatus?.preview_url ||
+              candidate.arrangementStatus?.output_url
+            if (cachedDirectUrl) {
+              console.log(
+                `[variation-preview] direct-url-hit (retry path) – candidate ${candidate.arrangement_id}`,
+                cachedDirectUrl
+              )
+              candidateDownloadAttemptsRef.current.delete(candidate.arrangement_id)
+              return { ...candidate, audioUrl: cachedDirectUrl }
+            }
+
             const attempts = candidateDownloadAttemptsRef.current.get(candidate.arrangement_id) ?? 0
             console.log(
               `[variation-preview] audio-retry – candidate ${candidate.arrangement_id} attempt ${attempts + 1}/${MAX_PREVIEW_DOWNLOAD_ATTEMPTS}`
@@ -381,21 +410,32 @@ export default function GeneratePage() {
             let nextAudioUrl = candidate.audioUrl ?? null
 
             if (!nextAudioUrl && (status.status === 'done' || status.status === 'completed')) {
-              try {
-                console.log(`[variation-preview] fetch-start – candidate ${candidate.arrangement_id} (first attempt on READY)`)
-                const blob = await downloadArrangement(candidate.arrangement_id)
-                nextAudioUrl = URL.createObjectURL(blob)
+              // PRIMARY: use a directly-servable URL from the status response.
+              const directUrl = status.preview_url || status.output_url
+              if (directUrl) {
                 console.log(
-                  `[variation-preview] fetch-success – candidate ${candidate.arrangement_id}`,
-                  nextAudioUrl
+                  `[variation-preview] direct-url-hit – candidate ${candidate.arrangement_id}`,
+                  directUrl
                 )
-              } catch (audioError) {
-                console.error(
-                  `[variation-preview] fetch-failed – candidate ${candidate.arrangement_id}:`,
-                  audioError
-                )
-                // nextAudioUrl stays null; the needsAudio retry path will handle
-                // subsequent attempts on the next tick.
+                nextAudioUrl = directUrl
+              } else {
+                // FALLBACK: blob download.
+                try {
+                  console.log(`[variation-preview] fetch-start – candidate ${candidate.arrangement_id} (first attempt on READY)`)
+                  const blob = await downloadArrangement(candidate.arrangement_id)
+                  nextAudioUrl = URL.createObjectURL(blob)
+                  console.log(
+                    `[variation-preview] fetch-success – candidate ${candidate.arrangement_id}`,
+                    nextAudioUrl
+                  )
+                } catch (audioError) {
+                  console.error(
+                    `[variation-preview] fetch-failed – candidate ${candidate.arrangement_id}:`,
+                    audioError
+                  )
+                  // nextAudioUrl stays null; the needsAudio retry path will handle
+                  // subsequent attempts on the next tick.
+                }
               }
             }
 
@@ -877,6 +917,46 @@ export default function GeneratePage() {
         setError(err.message)
       } else {
         setError('Failed to save arrangement preview.')
+      }
+    }
+  }
+
+  // Requeue a preview render that failed or was never completed.
+  // Resets the audioUnavailable / attempt-counter state for the affected
+  // arrangement so the polling loop can pick up the result once the worker
+  // finishes the new job.
+  const handleRetryPreview = async (retryArrangementId: number) => {
+    try {
+      await retryPreviewRender(retryArrangementId)
+      console.log('[LoopArchitect] Preview render re-queued for', retryArrangementId)
+    } catch (err) {
+      // Surface the error but don't block the reset below – even if the
+      // backend doesn't support the endpoint yet, resetting the local state
+      // gives the existing poll loop another chance to download the audio.
+      if (err instanceof LoopArchitectApiError) {
+        console.warn('[LoopArchitect] retryPreviewRender API error:', err.message)
+      } else {
+        console.warn('[LoopArchitect] retryPreviewRender unexpected error:', err)
+      }
+    }
+
+    // Always reset local state so the polling loop retries the download.
+    setPreviewCandidates((current) =>
+      current.map((candidate) =>
+        candidate.arrangement_id === retryArrangementId
+          ? { ...candidate, audioUnavailable: false, audioUrl: null }
+          : candidate
+      )
+    )
+    candidateDownloadAttemptsRef.current.delete(retryArrangementId)
+
+    // If this was the selected / main candidate, also reset the main state.
+    if (retryArrangementId === arrangementId || retryArrangementId === selectedPreviewId) {
+      setAudioUnavailable(false)
+      audioDownloadAttemptsRef.current = 0
+      if (audioUrl) {
+        URL.revokeObjectURL(audioUrl)
+        setAudioUrl(null)
       }
     }
   }
@@ -1578,17 +1658,56 @@ export default function GeneratePage() {
                       {isDone && candidate.audioUrl ? (
                         <audio controls src={candidate.audioUrl} className="w-full" />
                       ) : isDone && candidate.audioUnavailable ? (
-                        <p className="text-xs text-amber-400">
-                          Preview unavailable. You can still download the arrangement.
-                        </p>
-                      ) : isDone && !candidate.audioUrl ? (
-                        <div className="flex items-center gap-2 text-xs text-gray-400">
-                          <svg className="animate-spin h-3 w-3 text-blue-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" aria-hidden="true">
-                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                          </svg>
-                          Loading preview...
+                        <div className="space-y-2">
+                          <div className="flex items-center gap-2">
+                            <svg className="h-4 w-4 text-amber-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+                            </svg>
+                            <p className="text-xs text-amber-400">
+                              Preview unavailable. You can still download the arrangement.
+                            </p>
+                          </div>
+                          <button
+                            onClick={() => handleRetryPreview(candidate.arrangement_id)}
+                            className="text-xs text-blue-400 hover:text-blue-300 underline"
+                            aria-label={`Retry preview for arrangement ${candidate.arrangement_id}`}
+                          >
+                            Retry preview
+                          </button>
                         </div>
+                      ) : isDone && !candidate.audioUrl ? (
+                        (() => {
+                          const previewStatus = candidate.arrangementStatus?.preview_status
+                          const previewRendering =
+                            previewStatus === 'queued' || previewStatus === 'processing'
+                          const previewFailed = previewStatus === 'failed'
+                          if (previewFailed) {
+                            return (
+                              <div className="space-y-2">
+                                <p className="text-xs text-red-300">
+                                  Preview render failed.{' '}
+                                  {candidate.arrangementStatus?.preview_error ?? ''}
+                                </p>
+                                <button
+                                  onClick={() => handleRetryPreview(candidate.arrangement_id)}
+                                  className="text-xs text-blue-400 hover:text-blue-300 underline"
+                                  aria-label={`Retry preview for arrangement ${candidate.arrangement_id}`}
+                                >
+                                  Retry preview
+                                </button>
+                              </div>
+                            )
+                          }
+                          return (
+                            <div className="flex items-center gap-2 text-xs text-gray-400">
+                              <svg className="animate-spin h-3 w-3 text-blue-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" aria-hidden="true">
+                                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                              </svg>
+                              {previewRendering ? 'Rendering preview…' : 'Loading preview...'}
+                            </div>
+                          )
+                        })()
                       ) : isFailed ? (
                         <p className="text-xs text-red-300">Generation failed. Try generating a new variation.</p>
                       ) : (
@@ -1644,8 +1763,15 @@ export default function GeneratePage() {
                   ) : audioUnavailable ? (
                     /* Stable fallback – audio download failed after max retries */
                     <div className="space-y-4" aria-label="Preview unavailable">
-                      <div className="flex items-center justify-between">
+                      <div className="flex items-center justify-between flex-wrap gap-3">
                         <h3 className="text-lg font-semibold text-white">Preview Your Arrangement</h3>
+                        <button
+                          onClick={() => arrangementId !== null && arrangementId !== undefined && handleRetryPreview(arrangementId)}
+                          className="text-sm text-blue-400 hover:text-blue-300 underline"
+                          aria-label="Retry preview for this arrangement"
+                        >
+                          Retry preview
+                        </button>
                       </div>
                       <div className="bg-gray-900/80 border border-gray-700 rounded-lg h-[100px] flex items-center justify-center gap-3">
                         <svg
@@ -1659,28 +1785,41 @@ export default function GeneratePage() {
                         </svg>
                         <span className="text-sm text-amber-400">Preview unavailable. You can still download the arrangement.</span>
                       </div>
+                      {arrangementStatus.preview_error && (
+                        <p className="text-xs text-red-400">{arrangementStatus.preview_error}</p>
+                      )}
                     </div>
                   ) : (
-                    /* Skeleton player while audio blob download is in progress */
-                    <div className="space-y-4" aria-label="Preparing audio preview">
-                      <div className="flex items-center justify-between">
-                        <h3 className="text-lg font-semibold text-white">Preview Your Arrangement</h3>
-                        <span className="text-sm text-gray-400">Preparing preview...</span>
-                      </div>
-                      <div className="bg-gray-900/80 border border-gray-700 rounded-lg h-[100px] flex items-center justify-center gap-3">
-                        <svg
-                          className="animate-spin h-5 w-5 text-blue-500"
-                          xmlns="http://www.w3.org/2000/svg"
-                          fill="none"
-                          viewBox="0 0 24 24"
-                          aria-hidden="true"
-                        >
-                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                        </svg>
-                        <span className="text-sm text-gray-400">Loading audio...</span>
-                      </div>
-                    </div>
+                    /* Skeleton player while audio is loading or preview is still rendering */
+                    (() => {
+                      const previewStatus = arrangementStatus.preview_status
+                      const isPreviewRendering =
+                        previewStatus === 'queued' || previewStatus === 'processing'
+                      const loadingLabel = isPreviewRendering
+                        ? 'Rendering preview…'
+                        : 'Loading audio…'
+                      return (
+                        <div className="space-y-4" aria-label="Preparing audio preview">
+                          <div className="flex items-center justify-between">
+                            <h3 className="text-lg font-semibold text-white">Preview Your Arrangement</h3>
+                            <span className="text-sm text-gray-400">{loadingLabel}</span>
+                          </div>
+                          <div className="bg-gray-900/80 border border-gray-700 rounded-lg h-[100px] flex items-center justify-center gap-3">
+                            <svg
+                              className="animate-spin h-5 w-5 text-blue-500"
+                              xmlns="http://www.w3.org/2000/svg"
+                              fill="none"
+                              viewBox="0 0 24 24"
+                              aria-hidden="true"
+                            >
+                              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                            </svg>
+                            <span className="text-sm text-gray-400">{loadingLabel}</span>
+                          </div>
+                        </div>
+                      )
+                    })()
                   )}
                 </div>
               )}
