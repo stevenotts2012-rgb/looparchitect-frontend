@@ -628,20 +628,6 @@ describe('Functional merge guard – terminal state stickiness', () => {
     // Candidate 3: fresh URL accepted (no existing audioUrl to guard)
     expect(merged[2].audioUrl).toBe('blob:http://localhost/3')
   })
-
-  it('(7) unavailable cannot transition to ready via a stale poll for the same arrangement id', () => {
-    const unavailable: CandidateState = {
-      arrangement_id: 42, status: 'done', audioUrl: null, audioUnavailable: true,
-    }
-    // Even if a stale/concurrent poll produced a URL for the same ID, it must not override
-    const staleWithUrl: CandidateState = {
-      arrangement_id: 42, status: 'done', audioUrl: 'blob:http://localhost/late', audioUnavailable: false,
-    }
-    const merged = functionalMerge([unavailable], [staleWithUrl])
-    // audioUnavailable guard fires: existing is unavailable, next is not → keep existing
-    expect(merged[0].audioUnavailable).toBe(true)
-    expect(merged[0].audioUrl).toBeNull()
-  })
 })
 
 describe('(6) Arrangement preview main area – stable fallback after audio download failure', () => {
@@ -685,5 +671,37 @@ describe('(6) Arrangement preview main area – stable fallback after audio down
     const audioUnavailable = false
     const audioUrl: string | null = null
     expect(resolvePreviewState(audioUrl, audioUnavailable)).toBe('spinner')
+  })
+})
+
+describe('(7) Unavailable can only transition to ready with new resource identity', () => {
+  it('unavailable cannot transition to ready via a stale poll for the same arrangement id', () => {
+    const unavailable: CandidateState = {
+      arrangement_id: 42, status: 'done', audioUrl: null, audioUnavailable: true,
+    }
+    // Even if a stale/concurrent poll produced a URL for the same ID, it must not override
+    const staleWithUrl: CandidateState = {
+      arrangement_id: 42, status: 'done', audioUrl: 'blob:http://localhost/late', audioUnavailable: false,
+    }
+    const merged = functionalMerge([unavailable], [staleWithUrl])
+    // audioUnavailable guard fires: existing is unavailable, next is not → keep existing
+    expect(merged[0].audioUnavailable).toBe(true)
+    expect(merged[0].audioUrl).toBeNull()
+  })
+
+  it('a new generation cycle with a different arrangement id starts as ready (no unavailable guard applies)', () => {
+    // Old generation is unavailable
+    const currentState: CandidateState[] = [
+      { arrangement_id: 42, status: 'done', audioUrl: null, audioUnavailable: true },
+    ]
+    // Brand new generation with a new ID – the functional merge finds no existing entry
+    const freshCandidates: CandidateState[] = [
+      { arrangement_id: 99, status: 'done', audioUrl: 'blob:http://localhost/new', audioUnavailable: false },
+    ]
+    const merged = functionalMerge(currentState, freshCandidates)
+    // No existing entry for arrangement_id=99, so next passes through unchanged
+    expect(merged[0].arrangement_id).toBe(99)
+    expect(merged[0].audioUrl).toBe('blob:http://localhost/new')
+    expect(merged[0].audioUnavailable).toBe(false)
   })
 })

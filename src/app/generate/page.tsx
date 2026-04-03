@@ -213,17 +213,18 @@ export default function GeneratePage() {
           if (status.status === 'done' || status.status === 'completed') {
             // Only attempt the download if we haven't already succeeded or exhausted retries.
             if (!audioUrlRef.current && !audioUnavailable) {
-              try {
-                const attempts = audioDownloadAttemptsRef.current
-                if (attempts >= MAX_PREVIEW_DOWNLOAD_ATTEMPTS) {
-                  console.warn('[LoopArchitect] max-attempts-reached – marking main preview as unavailable')
-                  setAudioUnavailable(true)
-                } else {
-                  audioDownloadAttemptsRef.current = attempts + 1
-                  console.log('[LoopArchitect] Arrangement done – downloading audio for', arrangementId, `(attempt ${attempts + 1}/${MAX_PREVIEW_DOWNLOAD_ATTEMPTS})`)
+              const attempts = audioDownloadAttemptsRef.current
+              if (attempts >= MAX_PREVIEW_DOWNLOAD_ATTEMPTS) {
+                console.warn('[LoopArchitect] max-attempts-reached – marking main preview as unavailable')
+                setAudioUnavailable(true)
+              } else {
+                audioDownloadAttemptsRef.current = attempts + 1
+                console.log('[LoopArchitect] Arrangement done – downloading audio for', arrangementId, `(attempt ${attempts + 1}/${MAX_PREVIEW_DOWNLOAD_ATTEMPTS})`)
+                try {
                   const blob = await downloadArrangement(arrangementId)
                   const url = URL.createObjectURL(blob)
                   console.log('[LoopArchitect] Audio blob URL created:', url)
+                  // Reset counter on success so we don't wrongly skip future arrangements.
                   audioDownloadAttemptsRef.current = 0
                   setAudioUrl(url)
 
@@ -236,12 +237,12 @@ export default function GeneratePage() {
                       console.error('Failed to load loop audio:', loopErr)
                     }
                   }
-                }
-              } catch (err) {
-                console.error('[LoopArchitect] Failed to load audio preview (attempt', audioDownloadAttemptsRef.current, '):', err)
-                if (audioDownloadAttemptsRef.current >= MAX_PREVIEW_DOWNLOAD_ATTEMPTS) {
-                  console.warn('[LoopArchitect] max-attempts-reached – marking main preview as unavailable')
-                  setAudioUnavailable(true)
+                } catch (err) {
+                  console.error('[LoopArchitect] Failed to load audio preview (attempt', audioDownloadAttemptsRef.current, '):', err)
+                  if (audioDownloadAttemptsRef.current >= MAX_PREVIEW_DOWNLOAD_ATTEMPTS) {
+                    console.warn('[LoopArchitect] max-attempts-reached – marking main preview as unavailable')
+                    setAudioUnavailable(true)
+                  }
                 }
               }
             }
