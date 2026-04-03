@@ -62,6 +62,10 @@ export default function GeneratePage() {
   const [arrangementId, setArrangementId] = useState<number | null>(null)
   const [arrangementStatus, setArrangementStatus] = useState<ArrangementStatusResponse | null>(null)
   const [audioUrl, setAudioUrl] = useState<string | null>(null)
+  /** True once audio download for the main arrangement preview has failed after
+   *  MAX_PREVIEW_DOWNLOAD_ATTEMPTS.  Only resets when a new arrangement/generation
+   *  cycle begins.  Prevents the arrangement preview area from spinning forever. */
+  const [audioUnavailable, setAudioUnavailable] = useState(false)
   const [loopAudioUrl, setLoopAudioUrl] = useState<string | null>(null)
   const [historyRows, setHistoryRows] = useState<Arrangement[]>([])
   const [isHistoryLoading, setIsHistoryLoading] = useState(false)
@@ -111,6 +115,9 @@ export default function GeneratePage() {
   // Tracks how many times we have attempted to download the preview audio for
   // each candidate.  Keyed by arrangement_id.  Reset when candidates are cleared.
   const candidateDownloadAttemptsRef = useRef<Map<number, number>>(new Map())
+  // Tracks how many times we have attempted to download the main arrangement audio
+  // (standalone flow, no candidates).  Reset when arrangementId changes.
+  const audioDownloadAttemptsRef = useRef<number>(0)
 
   const clearPreviewCandidates = () => {
     setPreviewCandidates((current) => {
@@ -182,6 +189,9 @@ export default function GeneratePage() {
     if (!arrangementId) return
     if (previewCandidates.length > 0) return
 
+    // Reset download attempt counter for each new arrangement being tracked.
+    audioDownloadAttemptsRef.current = 0
+
     const pollStatus = async () => {
       try {
         const status = await getArrangementStatus(arrangementId)
@@ -201,24 +211,39 @@ export default function GeneratePage() {
           await loadHistory()
 
           if (status.status === 'done' || status.status === 'completed') {
-            try {
-              console.log('[LoopArchitect] Arrangement done – downloading audio for', arrangementId)
-              const blob = await downloadArrangement(arrangementId)
-              const url = URL.createObjectURL(blob)
-              console.log('[LoopArchitect] Audio blob URL created:', url)
-              setAudioUrl(url)
+            // Only attempt the download if we haven't already succeeded or exhausted retries.
+            if (!audioUrlRef.current && !audioUnavailable) {
+              try {
+                const attempts = audioDownloadAttemptsRef.current
+                if (attempts >= MAX_PREVIEW_DOWNLOAD_ATTEMPTS) {
+                  console.warn('[LoopArchitect] max-attempts-reached – marking main preview as unavailable')
+                  setAudioUnavailable(true)
+                } else {
+                  audioDownloadAttemptsRef.current = attempts + 1
+                  console.log('[LoopArchitect] Arrangement done – downloading audio for', arrangementId, `(attempt ${attempts + 1}/${MAX_PREVIEW_DOWNLOAD_ATTEMPTS})`)
+                  const blob = await downloadArrangement(arrangementId)
+                  const url = URL.createObjectURL(blob)
+                  console.log('[LoopArchitect] Audio blob URL created:', url)
+                  audioDownloadAttemptsRef.current = 0
+                  setAudioUrl(url)
 
-              // Also load the original loop audio for comparison
-              if (loopId) {
-                try {
-                  const loopUrl = await downloadLoop(parseInt(loopId))
-                  setLoopAudioUrl(loopUrl)
-                } catch (loopErr) {
-                  console.error('Failed to load loop audio:', loopErr)
+                  // Also load the original loop audio for comparison
+                  if (loopId) {
+                    try {
+                      const loopUrl = await downloadLoop(parseInt(loopId))
+                      setLoopAudioUrl(loopUrl)
+                    } catch (loopErr) {
+                      console.error('Failed to load loop audio:', loopErr)
+                    }
+                  }
+                }
+              } catch (err) {
+                console.error('[LoopArchitect] Failed to load audio preview (attempt', audioDownloadAttemptsRef.current, '):', err)
+                if (audioDownloadAttemptsRef.current >= MAX_PREVIEW_DOWNLOAD_ATTEMPTS) {
+                  console.warn('[LoopArchitect] max-attempts-reached – marking main preview as unavailable')
+                  setAudioUnavailable(true)
                 }
               }
-            } catch (err) {
-              console.error('Failed to load audio preview:', err)
             }
 
             // Load producer debug report
@@ -250,7 +275,7 @@ export default function GeneratePage() {
         clearInterval(pollingIntervalRef.current)
       }
     }
-  }, [arrangementId, loadHistory, loopId, previewCandidates.length])
+  }, [arrangementId, loadHistory, loopId, previewCandidates.length, audioUnavailable])
 
 
   // Poll preview candidates.
@@ -389,7 +414,26 @@ export default function GeneratePage() {
         })
       )
 
-      setPreviewCandidates(nextCandidates)
+      setPreviewCandidates((current) =>
+        // Functional update: merge nextCandidates into the LATEST state so that
+        // a stale concurrent poll cannot overwrite terminal states that were set
+        // by a faster concurrent poll tick.
+        nextCandidates.map((next) => {
+          const existing = current.find((c) => c.arrangement_id === next.arrangement_id)
+          // Guard 1: never overwrite terminal unavailable state (sticky until new identity)
+          if (existing?.audioUnavailable && !next.audioUnavailable) {
+            console.log(
+              `[variation-preview] guard-terminal – candidate ${next.arrangement_id} already unavailable; discarding stale update`
+            )
+            return existing
+          }
+          // Guard 2: never clear a valid audio URL because a stale poll omitted it
+          if (existing?.audioUrl && !next.audioUrl) {
+            return { ...next, audioUrl: existing.audioUrl }
+          }
+          return next
+        })
+      )
       await loadHistory()
     }
 
@@ -414,6 +458,11 @@ export default function GeneratePage() {
   // must NOT overwrite an already-valid `audioUrl` with null.  Previously the
   // unconditional `setAudioUrl(selected.audioUrl ?? null)` would clear the player
   // every time polling updated the candidate before the audio was ready.
+  //
+  // TERMINAL STATE FIX: Propagate `selected.audioUnavailable` to the main
+  // `audioUnavailable` state so the arrangement preview area shows a stable
+  // fallback instead of an infinite spinner when the selected candidate has
+  // exhausted its download retries.
   useEffect(() => {
     if (!selectedPreviewId) return
     const selected = previewCandidates.find((candidate) => candidate.arrangement_id === selectedPreviewId)
@@ -424,13 +473,18 @@ export default function GeneratePage() {
       setArrangementStatus(selected.arrangementStatus)
 
       if (selected.audioUrl != null) {
-        // A valid URL is available – use it.
+        // A valid URL is available – use it and clear any stale unavailable flag.
         console.log('[LoopArchitect] Setting audioUrl from selected candidate:', selected.audioUrl)
         setAudioUrl(selected.audioUrl)
+        setAudioUnavailable(false)
+      } else if (selected.audioUnavailable) {
+        // Candidate has exhausted retries – propagate the terminal state.
+        console.log('[LoopArchitect] Selected candidate is audioUnavailable – showing fallback for', selected.arrangement_id)
+        setAudioUnavailable(true)
       }
-      // If selected.audioUrl is null (audio not downloaded yet) we deliberately
-      // leave the current audioUrl state unchanged so the player keeps playing
-      // any audio that was already loaded for this same candidate.
+      // If selected.audioUrl is null but not yet unavailable (still in progress),
+      // leave both audioUrl and audioUnavailable unchanged so the current player /
+      // loading state is preserved without flicker.
 
       const isDone = selected.arrangementStatus.status === 'done' || selected.arrangementStatus.status === 'completed'
       if (isDone && loopId && !loopAudioUrl) {
@@ -534,6 +588,8 @@ export default function GeneratePage() {
     setAiPlanMeta(null)
     setAiPlanValidation(null)
     setError(null)
+    setAudioUnavailable(false)
+    audioDownloadAttemptsRef.current = 0
     if (audioUrl) {
       URL.revokeObjectURL(audioUrl)
       setAudioUrl(null)
@@ -640,6 +696,8 @@ export default function GeneratePage() {
     setAiPlanDraft(null)
     setAiPlanMeta(null)
     setAiPlanValidation(null)
+    setAudioUnavailable(false)
+    audioDownloadAttemptsRef.current = 0
     if (audioUrl) {
       URL.revokeObjectURL(audioUrl)
       setAudioUrl(null)
@@ -1454,6 +1512,8 @@ export default function GeneratePage() {
             onTrack={(selectedArrangementId) => {
               setSelectedPreviewId(null)
               setArrangementId(selectedArrangementId)
+              setAudioUnavailable(false)
+              audioDownloadAttemptsRef.current = 0
               setError(null)
             }}
             onDownload={handleHistoryDownload}
@@ -1580,6 +1640,25 @@ export default function GeneratePage() {
                     ) : (
                       <WaveformViewer audioUrl={audioUrl} title="Preview Your Arrangement" />
                     )
+                  ) : audioUnavailable ? (
+                    /* Stable fallback – audio download failed after max retries */
+                    <div className="space-y-4" aria-label="Preview unavailable">
+                      <div className="flex items-center justify-between">
+                        <h3 className="text-lg font-semibold text-white">Preview Your Arrangement</h3>
+                      </div>
+                      <div className="bg-gray-900/80 border border-gray-700 rounded-lg h-[100px] flex items-center justify-center gap-3">
+                        <svg
+                          className="h-5 w-5 text-amber-400"
+                          fill="none"
+                          stroke="currentColor"
+                          viewBox="0 0 24 24"
+                          aria-hidden="true"
+                        >
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+                        </svg>
+                        <span className="text-sm text-amber-400">Preview unavailable. You can still download the arrangement.</span>
+                      </div>
+                    </div>
                   ) : (
                     /* Skeleton player while audio blob download is in progress */
                     <div className="space-y-4" aria-label="Preparing audio preview">
@@ -1663,6 +1742,8 @@ export default function GeneratePage() {
                     setAiPlanMeta(null)
                     setAiPlanValidation(null)
                     setError(null)
+                    setAudioUnavailable(false)
+                    audioDownloadAttemptsRef.current = 0
                     if (audioUrl) {
                       URL.revokeObjectURL(audioUrl)
                       setAudioUrl(null)
