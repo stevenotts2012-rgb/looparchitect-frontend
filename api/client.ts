@@ -30,6 +30,30 @@ function apiUrl(path: string): string {
   return `${getApiBasePath()}${normalized}`;
 }
 
+// For multipart file uploads the browser must bypass the Next.js/Vercel proxy
+// (which has a request-body size limit that causes 413 errors) and POST directly
+// to the Railway backend.  We resolve the origin the same way the server side
+// does: honour NEXT_PUBLIC_API_URL when it is a full URL, then fall back to the
+// hard-coded Railway origin.
+function getUploadUrl(path: string): string {
+  const normalized = path.startsWith('/') ? path : `/${path}`;
+
+  // Server-side: reuse the normal base path (no proxy involved).
+  if (typeof window === 'undefined') {
+    return `${getApiBasePath()}${normalized}`;
+  }
+
+  // Browser: go directly to the backend, skipping the Vercel proxy.
+  // NEXT_PUBLIC_API_URL is inlined at build time by Next.js so it is safe to
+  // reference directly here.
+  const configured = (process.env.NEXT_PUBLIC_API_URL || '').trim();
+  const origin = (configured.startsWith('http://') || configured.startsWith('https://'))
+    ? configured.replace(/\/$/, '')
+    : DEFAULT_BACKEND_ORIGIN;
+
+  return `${origin}/api${normalized}`;
+}
+
 function generateCorrelationId(): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
     return crypto.randomUUID();
@@ -834,7 +858,7 @@ export async function uploadLoop(file: File | File[]): Promise<LoopResponse> {
       formData.append('file', files[0]);
     }
 
-    const response = await fetch(apiUrl('/v1/loops/with-file'), {
+    const response = await fetch(getUploadUrl('/v1/loops/with-file'), {
       method: 'POST',
       headers: {
         'x-correlation-id': correlationId,
@@ -846,7 +870,7 @@ export async function uploadLoop(file: File | File[]): Promise<LoopResponse> {
       const fallbackForm = new FormData();
       fallbackForm.append('file', files[0]);
 
-      const fallbackUploadResponse = await fetch(apiUrl('/v1/loops/upload'), {
+      const fallbackUploadResponse = await fetch(getUploadUrl('/v1/loops/upload'), {
         method: 'POST',
         headers: {
           'x-correlation-id': correlationId,
