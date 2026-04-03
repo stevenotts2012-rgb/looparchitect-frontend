@@ -21,6 +21,11 @@
  *    `setAudioUrl(selected.audioUrl ?? null)`, overwriting a valid URL with
  *    null whenever a poll tick updated the candidate before the audio was
  *    ready.
+ *
+ *  - hasPending only checked queued/processing/pending, so a candidate that
+ *    had transitioned to done but whose audio download had failed was never
+ *    retried.  The polling interval stopped, leaving the card permanently on
+ *    "Loading preview…".
  */
 
 // ---------------------------------------------------------------------------
@@ -81,8 +86,234 @@ function syncAudioUrlFromCandidate(
 }
 
 // ---------------------------------------------------------------------------
-// Tests
+// New helpers mirroring the retry/unavailable logic added to generate/page.tsx
 // ---------------------------------------------------------------------------
+
+const MAX_PREVIEW_DOWNLOAD_ATTEMPTS = 3
+
+type CandidateState = {
+  arrangement_id: number
+  status: string
+  audioUrl?: string | null
+  audioUnavailable?: boolean
+}
+
+/**
+ * Returns true when a candidate still needs work (either pending status or
+ * done/completed but missing an audio URL that has not been exhausted).
+ * Mirrors the `isStillPending || needsAudio` guard in pollCandidates.
+ */
+function shouldCandidateBeProcessed(candidate: CandidateState): boolean {
+  const isStillPending =
+    candidate.status === 'queued' ||
+    candidate.status === 'processing' ||
+    candidate.status === 'pending'
+  const needsAudio =
+    (candidate.status === 'done' || candidate.status === 'completed') &&
+    !candidate.audioUrl &&
+    !candidate.audioUnavailable
+  return isStillPending || needsAudio
+}
+
+/**
+ * Returns true when the interval should keep running (i.e. at least one
+ * candidate still needs work).  Mirrors the fixed `hasPending` check.
+ */
+function hasPendingCandidates(candidates: CandidateState[]): boolean {
+  return candidates.some(shouldCandidateBeProcessed)
+}
+
+/**
+ * Simulate a single audio-download retry tick for a done-without-audio
+ * candidate.  Returns the updated candidate.
+ */
+function applyAudioRetry(
+  candidate: CandidateState,
+  currentAttempts: number,
+  downloadedUrl: string | null,
+): CandidateState {
+  if (currentAttempts >= MAX_PREVIEW_DOWNLOAD_ATTEMPTS) {
+    return { ...candidate, audioUnavailable: true }
+  }
+  if (downloadedUrl !== null) {
+    return { ...candidate, audioUrl: downloadedUrl, audioUnavailable: false }
+  }
+  // Download failed – keep candidate as-is so next tick retries.
+  return candidate
+}
+
+// ---------------------------------------------------------------------------
+// Tests – variation preview lifecycle
+// ---------------------------------------------------------------------------
+
+describe('Variation preview lifecycle – retry and unavailable', () => {
+  describe('shouldCandidateBeProcessed – polling guard', () => {
+    it('returns true for queued candidates', () => {
+      expect(shouldCandidateBeProcessed({ arrangement_id: 1, status: 'queued', audioUrl: null }))
+        .toBe(true)
+    })
+
+    it('returns true for processing candidates', () => {
+      expect(shouldCandidateBeProcessed({ arrangement_id: 1, status: 'processing', audioUrl: null }))
+        .toBe(true)
+    })
+
+    it('returns true for pending candidates', () => {
+      expect(shouldCandidateBeProcessed({ arrangement_id: 1, status: 'pending', audioUrl: null }))
+        .toBe(true)
+    })
+
+    it('returns true for done candidate missing audioUrl (needs download)', () => {
+      expect(shouldCandidateBeProcessed({ arrangement_id: 1, status: 'done', audioUrl: null }))
+        .toBe(true)
+    })
+
+    it('returns true for completed candidate missing audioUrl (needs download)', () => {
+      expect(shouldCandidateBeProcessed({ arrangement_id: 1, status: 'completed', audioUrl: null }))
+        .toBe(true)
+    })
+
+    it('returns false for done candidate with valid audioUrl', () => {
+      expect(shouldCandidateBeProcessed({
+        arrangement_id: 1, status: 'done', audioUrl: 'blob:http://localhost/audio',
+      })).toBe(false)
+    })
+
+    it('returns false for done candidate marked audioUnavailable', () => {
+      expect(shouldCandidateBeProcessed({
+        arrangement_id: 1, status: 'done', audioUrl: null, audioUnavailable: true,
+      })).toBe(false)
+    })
+
+    it('returns false for failed candidates', () => {
+      expect(shouldCandidateBeProcessed({ arrangement_id: 1, status: 'failed', audioUrl: null }))
+        .toBe(false)
+    })
+  })
+
+  describe('hasPendingCandidates – interval stop guard', () => {
+    it('returns true when any candidate is still pending', () => {
+      const candidates: CandidateState[] = [
+        { arrangement_id: 1, status: 'done', audioUrl: 'blob:http://localhost/1' },
+        { arrangement_id: 2, status: 'processing', audioUrl: null },
+      ]
+      expect(hasPendingCandidates(candidates)).toBe(true)
+    })
+
+    it('returns true when a done candidate is still missing audioUrl', () => {
+      const candidates: CandidateState[] = [
+        { arrangement_id: 1, status: 'done', audioUrl: null },
+        { arrangement_id: 2, status: 'done', audioUrl: 'blob:http://localhost/2' },
+      ]
+      expect(hasPendingCandidates(candidates)).toBe(true)
+    })
+
+    it('returns false when all done candidates have audioUrl', () => {
+      const candidates: CandidateState[] = [
+        { arrangement_id: 1, status: 'done', audioUrl: 'blob:http://localhost/1' },
+        { arrangement_id: 2, status: 'done', audioUrl: 'blob:http://localhost/2' },
+      ]
+      expect(hasPendingCandidates(candidates)).toBe(false)
+    })
+
+    it('returns false when done-without-audio candidates are marked audioUnavailable', () => {
+      const candidates: CandidateState[] = [
+        { arrangement_id: 1, status: 'done', audioUrl: null, audioUnavailable: true },
+        { arrangement_id: 2, status: 'failed', audioUrl: null },
+      ]
+      expect(hasPendingCandidates(candidates)).toBe(false)
+    })
+  })
+
+  describe('applyAudioRetry – retry and unavailable transitions', () => {
+    it('variation becomes READY and preview appears on first successful download', () => {
+      const candidate: CandidateState = { arrangement_id: 1, status: 'done', audioUrl: null }
+      const result = applyAudioRetry(candidate, 0, 'blob:http://localhost/audio')
+      expect(result.audioUrl).toBe('blob:http://localhost/audio')
+      expect(result.audioUnavailable).toBe(false)
+    })
+
+    it('keeps candidate unchanged when download fails and attempts remain', () => {
+      const candidate: CandidateState = { arrangement_id: 1, status: 'done', audioUrl: null }
+      const result = applyAudioRetry(candidate, 1, null) // attempt 2, failed
+      expect(result.audioUrl).toBeNull()
+      expect(result.audioUnavailable).toBeUndefined()
+    })
+
+    it('READY with missing URL does not spin forever – marks unavailable after max attempts', () => {
+      const candidate: CandidateState = { arrangement_id: 1, status: 'done', audioUrl: null }
+
+      // Simulate MAX_PREVIEW_DOWNLOAD_ATTEMPTS = 3 consecutive failures.
+      let current = candidate
+      for (let attempt = 0; attempt < MAX_PREVIEW_DOWNLOAD_ATTEMPTS; attempt++) {
+        current = applyAudioRetry(current, attempt, null)
+        // Before exhausting attempts the candidate should still be retryable.
+        if (attempt < MAX_PREVIEW_DOWNLOAD_ATTEMPTS - 1) {
+          expect(current.audioUnavailable).toBeFalsy()
+          expect(shouldCandidateBeProcessed(current)).toBe(true)
+        }
+      }
+
+      // After MAX_PREVIEW_DOWNLOAD_ATTEMPTS the candidate is unavailable.
+      const final = applyAudioRetry(current, MAX_PREVIEW_DOWNLOAD_ATTEMPTS, null)
+      expect(final.audioUnavailable).toBe(true)
+      expect(final.audioUrl).toBeNull()
+      // And it no longer counts as pending – polling can safely stop.
+      expect(shouldCandidateBeProcessed(final)).toBe(false)
+    })
+
+    it('stale polling does not wipe out a valid variation preview URL', () => {
+      const existingUrl = 'blob:http://localhost/valid'
+      const candidate: CandidateState = {
+        arrangement_id: 1, status: 'done', audioUrl: existingUrl,
+      }
+      // shouldCandidateBeProcessed returns false → candidate is skipped entirely.
+      expect(shouldCandidateBeProcessed(candidate)).toBe(false)
+
+      // applyPollResult also preserves it (existing guard).
+      const result = applyPollResult(
+        [{ arrangement_id: 1, status: 'done', audioUrl: existingUrl }],
+        { arrangement_id: 1, status: 'done' },
+        'blob:http://localhost/stale', // a stale poll would try to write this
+      )
+      expect(result[0].audioUrl).toBe(existingUrl)
+    })
+
+    it('multiple variations can become READY independently without blocking each other', () => {
+      // Three variations; variation 2 download fails; 1 and 3 succeed.
+      const initial: CandidateState[] = [
+        { arrangement_id: 1, status: 'done', audioUrl: null },
+        { arrangement_id: 2, status: 'done', audioUrl: null },
+        { arrangement_id: 3, status: 'done', audioUrl: null },
+      ]
+
+      // Tick 1: attempt downloads.
+      const afterTick1 = initial.map((c) => {
+        if (c.arrangement_id === 1) return applyAudioRetry(c, 0, 'blob:http://localhost/1')
+        if (c.arrangement_id === 2) return applyAudioRetry(c, 0, null) // fails
+        return applyAudioRetry(c, 0, 'blob:http://localhost/3')
+      })
+
+      expect(afterTick1[0].audioUrl).toBe('blob:http://localhost/1')
+      expect(afterTick1[1].audioUrl).toBeNull() // still needs retry
+      expect(afterTick1[2].audioUrl).toBe('blob:http://localhost/3')
+
+      // Interval must still be considered running because candidate 2 needs work.
+      expect(hasPendingCandidates(afterTick1)).toBe(true)
+
+      // Tick 2: candidate 2 succeeds.
+      const afterTick2 = afterTick1.map((c) => {
+        if (c.arrangement_id === 2) return applyAudioRetry(c, 1, 'blob:http://localhost/2')
+        return c // already resolved, skip
+      })
+
+      expect(afterTick2[1].audioUrl).toBe('blob:http://localhost/2')
+      // Now all candidates have audio – interval can stop.
+      expect(hasPendingCandidates(afterTick2)).toBe(false)
+    })
+  })
+})
+
 
 describe('Arrangement audio URL lifecycle', () => {
   describe('applyPollResult – audio URL preservation', () => {
