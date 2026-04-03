@@ -824,9 +824,8 @@ export async function validateLoopSource(loopId: number): Promise<void> {
  * @returns Promise with the created loop details
  */
 export async function uploadLoop(file: File | File[]): Promise<LoopResponse> {
+  const correlationId = generateCorrelationId();
   try {
-    const correlationId = generateCorrelationId();
-    const formData = new FormData();
     const files = Array.isArray(file) ? file : [file];
     if (files.length === 0) {
       throw new LoopArchitectApiError('No upload files provided', 400);
@@ -840,16 +839,37 @@ export async function uploadLoop(file: File | File[]): Promise<LoopResponse> {
     if (hasZip && files.length > 1) {
       throw new LoopArchitectApiError('Upload exactly one ZIP file for stem-pack ZIP mode.', 400);
     }
-    
+
+    const uploadMode = hasZip ? 'stem-zip' : files.length > 1 ? 'multi-stem' : 'single';
+    const uploadUrl = getUploadUrl('/v1/loops/with-file');
+    const totalSizeBytes = files.reduce((sum, f) => sum + f.size, 0);
+
+    console.debug('[upload] starting', {
+      url: uploadUrl,
+      mode: uploadMode,
+      fileCount: files.length,
+      totalSizeKB: Math.round(totalSizeBytes / 1024),
+    });
+
+    // Build FormData.
+    // Do NOT set Content-Type manually – the browser must set it with the
+    // multipart boundary.  Do NOT include x-correlation-id: it is a custom
+    // header that forces a CORS preflight OPTIONS request.  Without it the
+    // multipart/form-data POST qualifies as a CORS "simple" request and is
+    // sent directly, eliminating the preflight round-trip that was silently
+    // blocking multi-stem uploads.
+    const formData = new FormData();
+
     // Create loop metadata with filename as name
     const loopMetadata = {
       name: hasZip ? files[0].name.replace(/\.zip$/i, '') : files[0].name,
       filename: files[0].name,
     };
-    
+
     // Append as JSON string (backend expects loop_in as Form field)
     formData.append('loop_in', JSON.stringify(loopMetadata));
-    // Append the audio file
+
+    // Append file(s) under the correct field name for each mode
     if (hasZip) {
       formData.append('stem_zip', files[0]);
     } else if (files.length > 1) {
@@ -858,23 +878,28 @@ export async function uploadLoop(file: File | File[]): Promise<LoopResponse> {
       formData.append('file', files[0]);
     }
 
-    const response = await fetch(getUploadUrl('/v1/loops/with-file'), {
+    // Log exact FormData keys for diagnostics
+    const formKeys: string[] = [];
+    formData.forEach((_value, key) => formKeys.push(key));
+    console.debug('[upload] formdata keys', formKeys);
+
+    console.debug('[upload] fetch start', { url: uploadUrl });
+    const response = await fetch(uploadUrl, {
       method: 'POST',
-      headers: {
-        'x-correlation-id': correlationId,
-      },
+      // No Content-Type header – browser sets multipart/form-data with boundary
+      // No x-correlation-id – would trigger CORS preflight; correlation is
+      // tracked client-side via the correlationId variable below
       body: formData,
     });
+    console.debug('[upload] fetch response', { status: response.status, ok: response.ok });
 
     if (!response.ok && !hasZip && files.length === 1 && response.status >= 500) {
+      console.debug('[upload] falling back to /v1/loops/upload');
       const fallbackForm = new FormData();
       fallbackForm.append('file', files[0]);
 
       const fallbackUploadResponse = await fetch(getUploadUrl('/v1/loops/upload'), {
         method: 'POST',
-        headers: {
-          'x-correlation-id': correlationId,
-        },
         body: fallbackForm,
       });
 
@@ -894,6 +919,7 @@ export async function uploadLoop(file: File | File[]): Promise<LoopResponse> {
     });
     return payload;
   } catch (error) {
+    console.debug('[upload] fetch failed', { error: error instanceof Error ? error.message : String(error) });
     if (error instanceof LoopArchitectApiError) {
       throw error;
     }
