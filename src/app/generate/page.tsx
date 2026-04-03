@@ -316,13 +316,11 @@ export default function GeneratePage() {
           if (needsAudio) {
             const attempts = candidateDownloadAttemptsRef.current.get(candidate.arrangement_id) ?? 0
             console.log(
-              `[variation-preview] audio-retry – candidate ${candidate.arrangement_id}` +
-              ` attempt ${attempts + 1}/${MAX_PREVIEW_DOWNLOAD_ATTEMPTS}`
+              `[variation-preview] audio-retry – candidate ${candidate.arrangement_id} attempt ${attempts + 1}/${MAX_PREVIEW_DOWNLOAD_ATTEMPTS}`
             )
             if (attempts >= MAX_PREVIEW_DOWNLOAD_ATTEMPTS) {
               console.warn(
-                `[variation-preview] max-attempts-reached – candidate ${candidate.arrangement_id}` +
-                ` – marking as unavailable`
+                `[variation-preview] max-attempts-reached – candidate ${candidate.arrangement_id} – marking as unavailable`
               )
               return { ...candidate, audioUnavailable: true }
             }
@@ -350,24 +348,15 @@ export default function GeneratePage() {
 
           // ── Normal pending status poll ────────────────────────────────────────
           try {
-            console.log(
-              `[variation-preview] status-poll – candidate ${candidate.arrangement_id}` +
-              ` current=${candidate.status}`
-            )
+            console.log(`[variation-preview] status-poll – candidate ${candidate.arrangement_id} current=${candidate.status}`)
             const status = await getArrangementStatus(candidate.arrangement_id)
-            console.log(
-              `[variation-preview] status-transition – candidate ${candidate.arrangement_id}` +
-              ` ${candidate.status} → ${status.status}`
-            )
+            console.log(`[variation-preview] status-transition – candidate ${candidate.arrangement_id} ${candidate.status} → ${status.status}`)
             // Preserve existing audioUrl – never overwrite a valid URL with null
             let nextAudioUrl = candidate.audioUrl ?? null
 
             if (!nextAudioUrl && (status.status === 'done' || status.status === 'completed')) {
               try {
-                console.log(
-                  `[variation-preview] fetch-start – candidate ${candidate.arrangement_id}` +
-                  ` (first attempt on READY)`
-                )
+                console.log(`[variation-preview] fetch-start – candidate ${candidate.arrangement_id} (first attempt on READY)`)
                 const blob = await downloadArrangement(candidate.arrangement_id)
                 nextAudioUrl = URL.createObjectURL(blob)
                 console.log(
