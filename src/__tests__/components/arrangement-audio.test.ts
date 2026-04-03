@@ -705,3 +705,217 @@ describe('(7) Unavailable can only transition to ready with new resource identit
     expect(merged[0].audioUnavailable).toBe(false)
   })
 })
+
+// ---------------------------------------------------------------------------
+// Direct URL priority path (preview_url / output_url)
+// ---------------------------------------------------------------------------
+
+/**
+ * Mirrors the new primary-path logic in pollCandidates:
+ *   const directUrl = status.preview_url || status.output_url
+ *   if (directUrl) { nextAudioUrl = directUrl } else { // blob download fallback }
+ */
+function resolveAudioUrlFromStatus(
+  currentAudioUrl: string | null,
+  statusResponse: {
+    status: string
+    preview_url?: string | null
+    output_url?: string | null
+  },
+  blobDownloadResult: string | null,
+): string | null {
+  if (currentAudioUrl) return currentAudioUrl // preserve existing
+  if (statusResponse.status !== 'done' && statusResponse.status !== 'completed') {
+    return currentAudioUrl
+  }
+  const directUrl = statusResponse.preview_url || statusResponse.output_url
+  if (directUrl) return directUrl
+  return blobDownloadResult // null if download fails
+}
+
+describe('(8) Direct URL priority path – preview_url / output_url', () => {
+  it('uses preview_url from status response instead of downloading a blob', () => {
+    const directUrl = 'https://cdn.example.com/previews/123.mp3'
+    const result = resolveAudioUrlFromStatus(
+      null,
+      { status: 'done', preview_url: directUrl },
+      null, // blob download not needed
+    )
+    expect(result).toBe(directUrl)
+  })
+
+  it('falls back to output_url when preview_url is absent', () => {
+    const outputUrl = 'https://cdn.example.com/output/123.wav'
+    const result = resolveAudioUrlFromStatus(
+      null,
+      { status: 'done', output_url: outputUrl },
+      null,
+    )
+    expect(result).toBe(outputUrl)
+  })
+
+  it('prefers preview_url over output_url when both are present', () => {
+    const result = resolveAudioUrlFromStatus(
+      null,
+      {
+        status: 'done',
+        preview_url: 'https://cdn.example.com/preview.mp3',
+        output_url: 'https://cdn.example.com/output.wav',
+      },
+      null,
+    )
+    expect(result).toBe('https://cdn.example.com/preview.mp3')
+  })
+
+  it('falls back to blob download when neither preview_url nor output_url is present', () => {
+    const blobUrl = 'blob:http://localhost/abc'
+    const result = resolveAudioUrlFromStatus(
+      null,
+      { status: 'done', preview_url: null, output_url: null },
+      blobUrl,
+    )
+    expect(result).toBe(blobUrl)
+  })
+
+  it('returns null when direct URL and blob download both fail', () => {
+    const result = resolveAudioUrlFromStatus(
+      null,
+      { status: 'done', preview_url: null, output_url: null },
+      null,
+    )
+    expect(result).toBeNull()
+  })
+
+  it('preserves an existing audioUrl regardless of what the status response returns', () => {
+    const existingUrl = 'blob:http://localhost/existing'
+    const result = resolveAudioUrlFromStatus(
+      existingUrl,
+      {
+        status: 'done',
+        preview_url: 'https://cdn.example.com/new.mp3',
+        output_url: 'https://cdn.example.com/new.wav',
+      },
+      'blob:http://localhost/new',
+    )
+    expect(result).toBe(existingUrl)
+  })
+
+  it('does not attempt to use direct URL for non-terminal statuses', () => {
+    const result = resolveAudioUrlFromStatus(
+      null,
+      { status: 'processing', preview_url: 'https://cdn.example.com/preview.mp3' },
+      null,
+    )
+    expect(result).toBeNull()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Preview status-aware display resolution
+// ---------------------------------------------------------------------------
+
+/**
+ * Mirrors the new preview_status-aware display logic in the arrangement
+ * preview area and candidate cards.
+ */
+function resolvePreviewDisplayState(
+  audioUrl: string | null,
+  audioUnavailable: boolean,
+  previewStatus?: string | null,
+): 'player' | 'fallback-with-retry' | 'rendering' | 'loading' {
+  if (audioUrl != null) return 'player'
+  if (audioUnavailable) return 'fallback-with-retry'
+  if (previewStatus === 'queued' || previewStatus === 'processing') return 'rendering'
+  return 'loading'
+}
+
+describe('(9) Preview status-aware display states', () => {
+  it('shows player when audioUrl is available (any preview_status)', () => {
+    expect(resolvePreviewDisplayState('blob:http://localhost/audio', false, 'completed')).toBe('player')
+    expect(resolvePreviewDisplayState('https://cdn.example.com/audio.mp3', false, 'queued')).toBe('player')
+  })
+
+  it('shows fallback-with-retry when audioUnavailable is true (no URL)', () => {
+    expect(resolvePreviewDisplayState(null, true, undefined)).toBe('fallback-with-retry')
+    expect(resolvePreviewDisplayState(null, true, 'failed')).toBe('fallback-with-retry')
+  })
+
+  it('shows rendering spinner when preview_status is queued', () => {
+    expect(resolvePreviewDisplayState(null, false, 'queued')).toBe('rendering')
+  })
+
+  it('shows rendering spinner when preview_status is processing', () => {
+    expect(resolvePreviewDisplayState(null, false, 'processing')).toBe('rendering')
+  })
+
+  it('shows generic loading when preview_status is absent (legacy backend)', () => {
+    expect(resolvePreviewDisplayState(null, false, null)).toBe('loading')
+    expect(resolvePreviewDisplayState(null, false, undefined)).toBe('loading')
+  })
+
+  it('shows generic loading when preview_status is completed but URL not yet set (race)', () => {
+    // preview_status=completed but audioUrl not yet resolved → loading briefly
+    expect(resolvePreviewDisplayState(null, false, 'completed')).toBe('loading')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// handleRetryPreview state reset logic
+// ---------------------------------------------------------------------------
+
+/**
+ * Mirrors the local state reset in handleRetryPreview:
+ *  - Resets audioUnavailable to false for the affected candidate.
+ *  - Clears audioUrl so polling loop can re-download or re-use direct URL.
+ *  - Removes download attempt counter for the candidate.
+ */
+function applyRetryPreviewReset(
+  candidates: CandidateState[],
+  retryArrangementId: number,
+): CandidateState[] {
+  return candidates.map((candidate) =>
+    candidate.arrangement_id === retryArrangementId
+      ? { ...candidate, audioUnavailable: false, audioUrl: null }
+      : candidate
+  )
+}
+
+describe('(10) handleRetryPreview – local state reset', () => {
+  it('resets audioUnavailable to false for the retried candidate', () => {
+    const candidates: CandidateState[] = [
+      { arrangement_id: 1, status: 'done', audioUrl: null, audioUnavailable: true },
+      { arrangement_id: 2, status: 'done', audioUrl: 'blob:http://localhost/2' },
+    ]
+    const result = applyRetryPreviewReset(candidates, 1)
+    expect(result[0].audioUnavailable).toBe(false)
+    expect(result[0].audioUrl).toBeNull()
+  })
+
+  it('does not affect other candidates', () => {
+    const candidates: CandidateState[] = [
+      { arrangement_id: 1, status: 'done', audioUrl: null, audioUnavailable: true },
+      { arrangement_id: 2, status: 'done', audioUrl: 'blob:http://localhost/2' },
+    ]
+    const result = applyRetryPreviewReset(candidates, 1)
+    expect(result[1].audioUrl).toBe('blob:http://localhost/2')
+    expect(result[1].audioUnavailable).toBeFalsy()
+  })
+
+  it('after reset the candidate becomes eligible for re-processing', () => {
+    const candidate: CandidateState = {
+      arrangement_id: 1, status: 'done', audioUrl: null, audioUnavailable: true,
+    }
+    const [reset] = applyRetryPreviewReset([candidate], 1)
+    expect(shouldCandidateBeProcessed(reset)).toBe(true)
+  })
+
+  it('re-queuing makes the polling interval re-start (hasPendingCandidates becomes true again)', () => {
+    const before: CandidateState[] = [
+      { arrangement_id: 1, status: 'done', audioUrl: null, audioUnavailable: true },
+    ]
+    expect(hasPendingCandidates(before)).toBe(false)
+
+    const after = applyRetryPreviewReset(before, 1)
+    expect(hasPendingCandidates(after)).toBe(true)
+  })
+})

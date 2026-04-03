@@ -177,6 +177,14 @@ export interface ArrangementStatusResponse {
   output_url?: string;
   stems_zip_url?: string;
   export_s3_key?: string;
+  // Preview render lifecycle fields – populated by the async preview worker.
+  // `preview_status` is the authoritative state of the audio render job;
+  // `preview_url` is a directly playable URL (served static file or signed URL).
+  preview_status?: 'pending' | 'queued' | 'processing' | 'completed' | 'failed';
+  preview_url?: string;
+  preview_error?: string;
+  preview_rendered_at?: string;
+  preview_job_id?: string;
 }
 
 export interface DawExportResponse {
@@ -958,6 +966,38 @@ export async function uploadLoop(file: File | File[]): Promise<LoopResponse> {
     }
     throw new LoopArchitectApiError(
       `Failed to upload loop: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      500
+    );
+  }
+}
+
+/**
+ * Requeue a failed or missing preview render job for an arrangement.
+ * Call this when preview_status is 'failed' or audio download has been
+ * exhausted, to give the worker another chance to produce the audio file.
+ *
+ * The backend is expected to respond with { queued: true, message: string }.
+ * If the endpoint does not yet exist (404) the error is surfaced to the caller.
+ */
+export async function retryPreviewRender(
+  arrangementId: number
+): Promise<{ queued: boolean; message: string }> {
+  try {
+    const correlationId = generateCorrelationId();
+    const response = await fetch(
+      apiUrl(`/v1/arrangements/${arrangementId}/retry-preview`),
+      {
+        method: 'POST',
+        headers: createJsonHeaders(correlationId),
+      }
+    );
+    return handleResponse<{ queued: boolean; message: string }>(response);
+  } catch (error) {
+    if (error instanceof LoopArchitectApiError) {
+      throw error;
+    }
+    throw new LoopArchitectApiError(
+      `Failed to retry preview render: ${error instanceof Error ? error.message : 'Unknown error'}`,
       500
     );
   }
