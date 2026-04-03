@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { getDawExportInfo, downloadDawExport, LoopArchitectApiError } from '@/../../api/client'
 
 type DawExportState = 'idle' | 'checking' | 'downloading' | 'done' | 'failed'
@@ -12,6 +12,17 @@ interface DawExportButtonProps {
 export default function DawExportButton({ arrangementId }: DawExportButtonProps) {
   const [state, setState] = useState<DawExportState>('idle')
   const [error, setError] = useState<string | null>(null)
+  const resetTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  // Clear any pending reset timeout on unmount so we don't update state after
+  // the component has been removed from the tree.
+  useEffect(() => {
+    return () => {
+      if (resetTimeoutRef.current !== null) {
+        clearTimeout(resetTimeoutRef.current)
+      }
+    }
+  }, [])
 
   const isActive = state === 'checking' || state === 'downloading'
 
@@ -45,8 +56,12 @@ export default function DawExportButton({ arrangementId }: DawExportButtonProps)
       window.URL.revokeObjectURL(url)
 
       setState('done')
-      // Reset to idle after 3 seconds so the button is reusable
-      setTimeout(() => setState('idle'), 3000)
+      // Reset to idle after 3 seconds so the button is reusable.
+      // Store the handle so we can cancel it if the component unmounts first.
+      resetTimeoutRef.current = setTimeout(() => {
+        resetTimeoutRef.current = null
+        setState('idle')
+      }, 3000)
     } catch (err) {
       const message =
         err instanceof LoopArchitectApiError
@@ -61,13 +76,13 @@ export default function DawExportButton({ arrangementId }: DawExportButtonProps)
   const buttonLabel = (): string => {
     switch (state) {
       case 'checking':
-        return 'Checking export…'
+        return 'Checking export...'
       case 'downloading':
-        return 'Downloading ZIP…'
+        return 'Downloading ZIP...'
       case 'done':
         return 'Downloaded!'
       case 'failed':
-        return 'Export Failed – Retry'
+        return 'Export Failed - Retry'
       default:
         return 'DAW Export (ZIP)'
     }

@@ -89,11 +89,11 @@ export default function ArrangementStatus({ arrangement }: ArrangementStatusProp
   const getStatusText = (status: string) => {
     switch (status) {
       case 'queued':
-        return 'Queued — waiting for a worker…'
+        return 'Queued -- waiting for a worker...'
       case 'pending':
-        return 'Preparing…'
+        return 'Preparing...'
       case 'processing':
-        return 'Rendering arrangement…'
+        return 'Rendering arrangement...'
       case 'done':
       case 'completed':
         return 'Arrangement ready!'

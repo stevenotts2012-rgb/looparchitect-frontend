@@ -1408,7 +1408,7 @@ export default function GeneratePage() {
                     switch (candidate.status) {
                       case 'queued': return 'Queued'
                       case 'pending': return 'Preparing'
-                      case 'processing': return 'Rendering…'
+                      case 'processing': return 'Rendering...'
                       case 'done':
                       case 'completed': return 'Ready'
                       case 'failed': return 'Failed'
@@ -1442,7 +1442,7 @@ export default function GeneratePage() {
                             <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                             <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
                           </svg>
-                          Loading preview…
+                          Loading preview...
                         </div>
                       ) : isFailed ? (
                         <p className="text-xs text-red-300">Generation failed. Try generating a new variation.</p>
@@ -1501,7 +1501,7 @@ export default function GeneratePage() {
                     <div className="space-y-4" aria-label="Preparing audio preview">
                       <div className="flex items-center justify-between">
                         <h3 className="text-lg font-semibold text-white">Preview Your Arrangement</h3>
-                        <span className="text-sm text-gray-400">Preparing preview…</span>
+                        <span className="text-sm text-gray-400">Preparing preview...</span>
                       </div>
                       <div className="bg-gray-900/80 border border-gray-700 rounded-lg h-[100px] flex items-center justify-center gap-3">
                         <svg
@@ -1514,7 +1514,7 @@ export default function GeneratePage() {
                           <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                           <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
                         </svg>
-                        <span className="text-sm text-gray-400">Loading audio…</span>
+                        <span className="text-sm text-gray-400">Loading audio...</span>
                       </div>
                     </div>
                   )}
