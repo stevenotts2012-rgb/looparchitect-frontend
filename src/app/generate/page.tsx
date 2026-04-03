@@ -42,7 +42,14 @@ export default function GeneratePage() {
     arrangementStatus?: ArrangementStatusResponse | null
     audioUrl?: string | null
     isSaved?: boolean
+    /** Set to true once audio download has been retried MAX_PREVIEW_DOWNLOAD_ATTEMPTS
+     *  times without success.  Prevents infinite "Loading preview..." spinner. */
+    audioUnavailable?: boolean
   }
+
+  /** Maximum number of times we attempt to download a preview audio blob for a
+   *  single candidate before giving up and showing "Preview unavailable". */
+  const MAX_PREVIEW_DOWNLOAD_ATTEMPTS = 3
 
   const [loopId, setLoopId] = useState<string>('')
   const [arrangementType, setArrangementType] = useState<'bars' | 'duration'>('bars')
@@ -101,6 +108,9 @@ export default function GeneratePage() {
   // Holds the candidates-polling interval handle so we can stop it early once all
   // candidates reach a terminal state (done/failed/completed).
   const candidatesIntervalRef = useRef<NodeJS.Timeout | null>(null)
+  // Tracks how many times we have attempted to download the preview audio for
+  // each candidate.  Keyed by arrangement_id.  Reset when candidates are cleared.
+  const candidateDownloadAttemptsRef = useRef<Map<number, number>>(new Map())
 
   const clearPreviewCandidates = () => {
     setPreviewCandidates((current) => {
@@ -112,6 +122,9 @@ export default function GeneratePage() {
       return []
     })
     setSelectedPreviewId(null)
+    // Reset per-candidate download attempt counters so a fresh generation starts
+    // with a clean slate.
+    candidateDownloadAttemptsRef.current.clear()
   }
 
   useEffect(() => {
@@ -260,8 +273,15 @@ export default function GeneratePage() {
     const pollCandidates = async () => {
       const current = previewCandidatesRef.current
 
+      // A candidate still needs work if it is in a pending state OR if it has
+      // reached done/completed but we have not yet successfully obtained a
+      // playable audio URL (and haven't exhausted download retries).
       const hasPending = current.some(
-        (c) => c.status === 'queued' || c.status === 'processing' || c.status === 'pending'
+        (c) =>
+          c.status === 'queued' ||
+          c.status === 'processing' ||
+          c.status === 'pending' ||
+          ((c.status === 'done' || c.status === 'completed') && !c.audioUrl && !c.audioUnavailable)
       )
       if (!hasPending) {
         // All candidates are in a terminal state – stop the interval now rather
@@ -273,26 +293,94 @@ export default function GeneratePage() {
         return
       }
 
-      console.log('[LoopArchitect] Polling', current.length, 'candidate(s)')
+      console.log('[variation-preview] Polling', current.length, 'candidate(s)')
       const nextCandidates = await Promise.all(
         current.map(async (candidate) => {
-          if (!(candidate.status === 'queued' || candidate.status === 'processing' || candidate.status === 'pending')) {
+          const isStillPending =
+            candidate.status === 'queued' ||
+            candidate.status === 'processing' ||
+            candidate.status === 'pending'
+          const needsAudio =
+            (candidate.status === 'done' || candidate.status === 'completed') &&
+            !candidate.audioUrl &&
+            !candidate.audioUnavailable
+
+          if (!isStillPending && !needsAudio) {
+            // Already in a terminal state with audio (or failed/unavailable) – skip.
             return candidate
           }
 
+          // ── Retry audio download for done-without-audio candidates ──────────
+          // The candidate status is already done/completed; we only need to
+          // (re)attempt downloading the audio blob.
+          if (needsAudio) {
+            const attempts = candidateDownloadAttemptsRef.current.get(candidate.arrangement_id) ?? 0
+            console.log(
+              `[variation-preview] audio-retry – candidate ${candidate.arrangement_id}` +
+              ` attempt ${attempts + 1}/${MAX_PREVIEW_DOWNLOAD_ATTEMPTS}`
+            )
+            if (attempts >= MAX_PREVIEW_DOWNLOAD_ATTEMPTS) {
+              console.warn(
+                `[variation-preview] max-attempts-reached – candidate ${candidate.arrangement_id}` +
+                ` – marking as unavailable`
+              )
+              return { ...candidate, audioUnavailable: true }
+            }
+            candidateDownloadAttemptsRef.current.set(candidate.arrangement_id, attempts + 1)
+            try {
+              console.log(`[variation-preview] fetch-start – candidate ${candidate.arrangement_id}`)
+              const blob = await downloadArrangement(candidate.arrangement_id)
+              const url = URL.createObjectURL(blob)
+              console.log(
+                `[variation-preview] fetch-success – candidate ${candidate.arrangement_id}`,
+                url
+              )
+              // Download succeeded – remove the attempt counter.
+              candidateDownloadAttemptsRef.current.delete(candidate.arrangement_id)
+              return { ...candidate, audioUrl: url }
+            } catch (audioError) {
+              console.error(
+                `[variation-preview] fetch-failed – candidate ${candidate.arrangement_id}:`,
+                audioError
+              )
+              // Will be retried on the next tick until MAX_PREVIEW_DOWNLOAD_ATTEMPTS.
+              return candidate
+            }
+          }
+
+          // ── Normal pending status poll ────────────────────────────────────────
           try {
+            console.log(
+              `[variation-preview] status-poll – candidate ${candidate.arrangement_id}` +
+              ` current=${candidate.status}`
+            )
             const status = await getArrangementStatus(candidate.arrangement_id)
+            console.log(
+              `[variation-preview] status-transition – candidate ${candidate.arrangement_id}` +
+              ` ${candidate.status} → ${status.status}`
+            )
             // Preserve existing audioUrl – never overwrite a valid URL with null
             let nextAudioUrl = candidate.audioUrl ?? null
 
             if (!nextAudioUrl && (status.status === 'done' || status.status === 'completed')) {
               try {
-                console.log('[LoopArchitect] Candidate done – downloading audio for', candidate.arrangement_id)
+                console.log(
+                  `[variation-preview] fetch-start – candidate ${candidate.arrangement_id}` +
+                  ` (first attempt on READY)`
+                )
                 const blob = await downloadArrangement(candidate.arrangement_id)
                 nextAudioUrl = URL.createObjectURL(blob)
-                console.log('[LoopArchitect] Audio blob URL created for candidate', candidate.arrangement_id, ':', nextAudioUrl)
+                console.log(
+                  `[variation-preview] fetch-success – candidate ${candidate.arrangement_id}`,
+                  nextAudioUrl
+                )
               } catch (audioError) {
-                console.error(`Failed to load preview audio for candidate ${candidate.arrangement_id}:`, audioError)
+                console.error(
+                  `[variation-preview] fetch-failed – candidate ${candidate.arrangement_id}:`,
+                  audioError
+                )
+                // nextAudioUrl stays null; the needsAudio retry path will handle
+                // subsequent attempts on the next tick.
               }
             }
 
@@ -303,7 +391,10 @@ export default function GeneratePage() {
               audioUrl: nextAudioUrl,
             }
           } catch (statusError) {
-            console.error(`Failed to poll candidate ${candidate.arrangement_id}:`, statusError)
+            console.error(
+              `[variation-preview] status-poll-failed – candidate ${candidate.arrangement_id}:`,
+              statusError
+            )
             return candidate
           }
         })
@@ -1436,6 +1527,10 @@ export default function GeneratePage() {
 
                       {isDone && candidate.audioUrl ? (
                         <audio controls src={candidate.audioUrl} className="w-full" />
+                      ) : isDone && candidate.audioUnavailable ? (
+                        <p className="text-xs text-amber-400">
+                          Preview unavailable. You can still download the arrangement.
+                        </p>
                       ) : isDone && !candidate.audioUrl ? (
                         <div className="flex items-center gap-2 text-xs text-gray-400">
                           <svg className="animate-spin h-3 w-3 text-blue-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" aria-hidden="true">
