@@ -5,13 +5,14 @@ const config = {
   transform: {
     '^.+\\.(ts|tsx)$': ['ts-jest', {
       tsconfig: {
-        jsx: 'react',
+        jsx: 'react-jsx',
       },
     }],
   },
   moduleNameMapper: {
+    // More-specific pattern must come first: @/../../api/… → <rootDir>/api/…
+    '^@/\\.\\./\\.\\./api/(.*)$': '<rootDir>/api/$1',
     '^@/(.*)$': '<rootDir>/src/$1',
-    '^@/../../api/(.*)$': '<rootDir>/api/$1',
   },
   testMatch: [
     '**/__tests__/**/*.[jt]s?(x)',
