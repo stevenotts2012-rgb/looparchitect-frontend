@@ -824,6 +824,8 @@ export async function validateLoopSource(loopId: number): Promise<void> {
  * @returns Promise with the created loop details
  */
 export async function uploadLoop(file: File | File[]): Promise<LoopResponse> {
+  // correlationId is used in the feature_event log below; it is intentionally
+  // not sent as a request header so uploads remain CORS "simple" requests.
   const correlationId = generateCorrelationId();
   try {
     const files = Array.isArray(file) ? file : [file];
@@ -886,9 +888,10 @@ export async function uploadLoop(file: File | File[]): Promise<LoopResponse> {
     console.debug('[upload] fetch start', { url: uploadUrl });
     const response = await fetch(uploadUrl, {
       method: 'POST',
-      // No Content-Type header – browser sets multipart/form-data with boundary
-      // No x-correlation-id – would trigger CORS preflight; correlation is
-      // tracked client-side via the correlationId variable below
+      // No Content-Type header – browser sets multipart/form-data with boundary.
+      // No x-correlation-id – it is a custom header that forces a CORS preflight
+      // OPTIONS request before every upload.  Without it multipart/form-data is a
+      // CORS "simple" request and is sent directly without a preflight round-trip.
       body: formData,
     });
     console.debug('[upload] fetch response', { status: response.status, ok: response.ok });
