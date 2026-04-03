@@ -96,6 +96,8 @@ export default function GeneratePage() {
   const pollingErrorCountRef = useRef<number>(0)
   const audioUrlRef = useRef<string | null>(null)
   const loopAudioUrlRef = useRef<string | null>(null)
+  // Tracks current candidates for use in cleanup (avoids stale closure in unmount effect)
+  const previewCandidatesRef = useRef<PreviewCandidateState[]>([])
 
   const clearPreviewCandidates = () => {
     setPreviewCandidates((current) => {
@@ -159,7 +161,7 @@ export default function GeneratePage() {
     loadStyles()
   }, [])
 
-  // Poll arrangement status
+  // Poll arrangement status (used only when there are no preview candidates)
   useEffect(() => {
     if (!arrangementId) return
     if (previewCandidates.length > 0) return
@@ -169,6 +171,7 @@ export default function GeneratePage() {
         const status = await getArrangementStatus(arrangementId)
         pollingErrorCountRef.current = 0
         setArrangementStatus(status)
+        console.log('[LoopArchitect] Polling status:', arrangementId, status.status)
 
         const isFinished =
           status.status === 'done' || status.status === 'completed' || status.status === 'failed'
@@ -183,8 +186,10 @@ export default function GeneratePage() {
 
           if (status.status === 'done' || status.status === 'completed') {
             try {
+              console.log('[LoopArchitect] Arrangement done – downloading audio for', arrangementId)
               const blob = await downloadArrangement(arrangementId)
               const url = URL.createObjectURL(blob)
+              console.log('[LoopArchitect] Audio blob URL created:', url)
               setAudioUrl(url)
 
               // Also load the original loop audio for comparison
@@ -231,29 +236,50 @@ export default function GeneratePage() {
     }
   }, [arrangementId, loadHistory, loopId, previewCandidates.length])
 
+
+  // Poll preview candidates.
+  //
+  // ROOT CAUSE FIX: The dependency array uses `previewCandidates.length` (not the
+  // full `previewCandidates` array).  Previously using the full array caused this
+  // effect to re-run every time `setPreviewCandidates` was called from *inside*
+  // the interval callback, creating an infinite re-run loop.  Each re-run cleared
+  // the interval and immediately fired a new poll with a stale closure where
+  // `candidate.audioUrl` was still null.  When those stale polls completed they
+  // called `setPreviewCandidates` again with `audioUrl: null`, which caused
+  // effect #6 (selectedPreviewId sync) to write `null` into the main `audioUrl`
+  // state, clearing the player.
+  //
+  // The interval callback now reads candidates from `previewCandidatesRef` so it
+  // always operates on the freshest state without needing the state value in deps.
   useEffect(() => {
     if (previewCandidates.length === 0) return
 
-    const hasPending = previewCandidates.some(
-      (candidate) => candidate.status === 'queued' || candidate.status === 'processing' || candidate.status === 'pending'
-    )
-    if (!hasPending) return
-
     const pollCandidates = async () => {
+      const current = previewCandidatesRef.current
+
+      const hasPending = current.some(
+        (c) => c.status === 'queued' || c.status === 'processing' || c.status === 'pending'
+      )
+      if (!hasPending) return
+
+      console.log('[LoopArchitect] Polling', current.length, 'candidate(s)')
       const nextCandidates = await Promise.all(
-        previewCandidates.map(async (candidate) => {
+        current.map(async (candidate) => {
           if (!(candidate.status === 'queued' || candidate.status === 'processing' || candidate.status === 'pending')) {
             return candidate
           }
 
           try {
             const status = await getArrangementStatus(candidate.arrangement_id)
+            // Preserve existing audioUrl – never overwrite a valid URL with null
             let nextAudioUrl = candidate.audioUrl ?? null
 
             if (!nextAudioUrl && (status.status === 'done' || status.status === 'completed')) {
               try {
+                console.log('[LoopArchitect] Candidate done – downloading audio for', candidate.arrangement_id)
                 const blob = await downloadArrangement(candidate.arrangement_id)
                 nextAudioUrl = URL.createObjectURL(blob)
+                console.log('[LoopArchitect] Audio blob URL created for candidate', candidate.arrangement_id, ':', nextAudioUrl)
               } catch (audioError) {
                 console.error(`Failed to load preview audio for candidate ${candidate.arrangement_id}:`, audioError)
               }
@@ -279,8 +305,20 @@ export default function GeneratePage() {
     pollCandidates()
     const interval = setInterval(pollCandidates, 3000)
     return () => clearInterval(interval)
-  }, [loadHistory, previewCandidates])
+    // IMPORTANT: only `previewCandidates.length` (not the full array) is listed
+    // as a dependency so that status changes inside the array do NOT restart this
+    // effect.  The ref (`previewCandidatesRef`) is kept in sync separately and
+    // gives the interval callback access to fresh state without closing over it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loadHistory, previewCandidates.length])
 
+  // Sync selectedPreviewId → main arrangement state.
+  //
+  // DEFENSIVE FIX: When `previewCandidates` updates (e.g. after a poll tick) but
+  // `selected.audioUrl` is still null/undefined (audio not yet downloaded), we
+  // must NOT overwrite an already-valid `audioUrl` with null.  Previously the
+  // unconditional `setAudioUrl(selected.audioUrl ?? null)` would clear the player
+  // every time polling updated the candidate before the audio was ready.
   useEffect(() => {
     if (!selectedPreviewId) return
     const selected = previewCandidates.find((candidate) => candidate.arrangement_id === selectedPreviewId)
@@ -289,7 +327,15 @@ export default function GeneratePage() {
     if (selected.arrangementStatus) {
       setArrangementId(selected.arrangement_id)
       setArrangementStatus(selected.arrangementStatus)
-      setAudioUrl(selected.audioUrl ?? null)
+
+      if (selected.audioUrl != null) {
+        // A valid URL is available – use it.
+        console.log('[LoopArchitect] Setting audioUrl from selected candidate:', selected.audioUrl)
+        setAudioUrl(selected.audioUrl)
+      }
+      // If selected.audioUrl is null (audio not downloaded yet) we deliberately
+      // leave the current audioUrl state unchanged so the player keeps playing
+      // any audio that was already loaded for this same candidate.
 
       const isDone = selected.arrangementStatus.status === 'done' || selected.arrangementStatus.status === 'completed'
       if (isDone && loopId && !loopAudioUrl) {
@@ -302,13 +348,33 @@ export default function GeneratePage() {
 
   useEffect(() => {
     audioUrlRef.current = audioUrl
+    console.log('[LoopArchitect] audioUrl state changed:', audioUrl)
   }, [audioUrl])
 
   useEffect(() => {
     loopAudioUrlRef.current = loopAudioUrl
   }, [loopAudioUrl])
 
-  // Cleanup audio URLs only on unmount
+  // Keep previewCandidatesRef in sync so the polling interval and unmount
+  // cleanup always have access to the latest candidates without closing over
+  // stale state.
+  useEffect(() => {
+    previewCandidatesRef.current = previewCandidates
+  }, [previewCandidates])
+
+  // Cleanup audio blob URLs on component unmount ONLY.
+  //
+  // ROOT CAUSE FIX: The dependency array is `[]` (empty), not `[previewCandidates]`.
+  //
+  // Previously `[previewCandidates]` was listed as a dependency.  React runs the
+  // *cleanup* of a useEffect whenever its dependencies change, not only on
+  // unmount.  So every call to `setPreviewCandidates` (which happens on every
+  // 3-second poll tick) was triggering `URL.revokeObjectURL(audioUrlRef.current)`,
+  // invalidating the blob URL that the AudioPlayer had just been given.  The
+  // player then received a revoked URL → reset to 0:00 / 0:00.
+  //
+  // Candidate URLs are now accessed via `previewCandidatesRef` (kept in sync
+  // above) so they are still correctly revoked on unmount.
   useEffect(() => {
     return () => {
       if (audioUrlRef.current) {
@@ -317,13 +383,13 @@ export default function GeneratePage() {
       if (loopAudioUrlRef.current) {
         URL.revokeObjectURL(loopAudioUrlRef.current)
       }
-      previewCandidates.forEach((candidate) => {
+      previewCandidatesRef.current.forEach((candidate) => {
         if (candidate.audioUrl) {
           URL.revokeObjectURL(candidate.audioUrl)
         }
       })
     }
-  }, [previewCandidates])
+  }, []) // empty deps – runs cleanup ONLY on component unmount
 
   const handleHistoryRefresh = async () => {
     const loopIdNum = parseInt(historyLoopIdFilter || loopId, 10)
