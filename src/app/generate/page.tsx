@@ -9,7 +9,6 @@ import {
   getArrangementStatus,
   getArrangementMetadata,
   downloadArrangement,
-  downloadDawExport,
   listArrangements,
   listStylePresets,
   validateLoopSource,
@@ -27,6 +26,7 @@ import {
 } from '@/../../api/client'
 import ArrangementStatus from '@/components/ArrangementStatus'
 import DownloadButton from '@/components/DownloadButton'
+import DawExportButton from '@/components/DawExportButton'
 import GenerationHistory from '@/components/GenerationHistory'
 import WaveformViewer from '@/components/WaveformViewer'
 import BeforeAfterComparison from '@/components/BeforeAfterComparison'
@@ -1452,28 +1452,7 @@ export default function GeneratePage() {
               {(arrangementStatus.status === 'done' || arrangementStatus.status === 'completed') && (
                 <div className="flex flex-col sm:flex-row gap-4">
                   <DownloadButton arrangementId={arrangementId} />
-                  <button
-                    onClick={async () => {
-                      try {
-                        const blob = await downloadDawExport(arrangementId)
-                        const url = window.URL.createObjectURL(blob)
-                        const link = document.createElement('a')
-                        link.href = url
-                        link.download = `arrangement_${arrangementId}_daw_export.zip`
-                        document.body.appendChild(link)
-                        link.click()
-                        document.body.removeChild(link)
-                        window.URL.revokeObjectURL(url)
-                      } catch (err) {
-                        console.error('Failed to download DAW export:', err)
-                        alert('Failed to download DAW export. Please try again.')
-                      }
-                    }}
-                    className="bg-gray-700 hover:bg-gray-600 text-white font-semibold py-3 px-6 rounded-lg transition-colors"
-                    title="Download stems, MIDI, and markers for your DAW"
-                  >
-                    DAW Export (ZIP)
-                  </button>
+                  <DawExportButton arrangementId={arrangementId} />
                 </div>
               )}
 
