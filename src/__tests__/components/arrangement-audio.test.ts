@@ -26,6 +26,11 @@
  *    had transitioned to done but whose audio download had failed was never
  *    retried.  The polling interval stopped, leaving the card permanently on
  *    "Loading preview…".
+ *
+ *  - The arrangement status response field for the audio URL could be either
+ *    `output_file_url` or `output_url` depending on the backend version.
+ *    Only `output_url` was previously read, so `output_file_url` was silently
+ *    ignored, leaving the player at 0:00 / 0:00 with no audio.
  */
 
 // ---------------------------------------------------------------------------
@@ -712,7 +717,7 @@ describe('(7) Unavailable can only transition to ready with new resource identit
 
 /**
  * Mirrors the new primary-path logic in pollCandidates:
- *   const directUrl = status.preview_url || status.output_url
+ *   const directUrl = status.preview_url || status.output_file_url || status.output_url
  *   if (directUrl) { nextAudioUrl = directUrl } else { // blob download fallback }
  */
 function resolveAudioUrlFromStatus(
@@ -720,6 +725,7 @@ function resolveAudioUrlFromStatus(
   statusResponse: {
     status: string
     preview_url?: string | null
+    output_file_url?: string | null
     output_url?: string | null
   },
   blobDownloadResult: string | null,
@@ -728,7 +734,7 @@ function resolveAudioUrlFromStatus(
   if (statusResponse.status !== 'done' && statusResponse.status !== 'completed') {
     return currentAudioUrl
   }
-  const directUrl = statusResponse.preview_url || statusResponse.output_url
+  const directUrl = statusResponse.preview_url || statusResponse.output_file_url || statusResponse.output_url
   if (directUrl) return directUrl
   return blobDownloadResult // null if download fails
 }
@@ -807,6 +813,29 @@ describe('(8) Direct URL priority path – preview_url / output_url', () => {
       null,
     )
     expect(result).toBeNull()
+  })
+
+  it('uses output_file_url when preview_url and output_url are absent', () => {
+    const fileUrl = 'https://cdn.example.com/output/123.mp3'
+    const result = resolveAudioUrlFromStatus(
+      null,
+      { status: 'done', output_file_url: fileUrl },
+      null,
+    )
+    expect(result).toBe(fileUrl)
+  })
+
+  it('prefers output_file_url over output_url when preview_url is absent', () => {
+    const result = resolveAudioUrlFromStatus(
+      null,
+      {
+        status: 'done',
+        output_file_url: 'https://cdn.example.com/file.mp3',
+        output_url: 'https://cdn.example.com/out.wav',
+      },
+      null,
+    )
+    expect(result).toBe('https://cdn.example.com/file.mp3')
   })
 })
 
@@ -917,5 +946,84 @@ describe('(10) handleRetryPreview – local state reset', () => {
 
     const after = applyRetryPreviewReset(before, 1)
     expect(hasPendingCandidates(after)).toBe(true)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// (11) output_file_url field mapping
+// ---------------------------------------------------------------------------
+
+/**
+ * Simplified URL resolution helper used in the (11) test suite.
+ * Mirrors the direct-URL priority used in the main arrangement poll:
+ *   const resolvedAudioUrl = preview_url || output_file_url || output_url
+ */
+function resolveDirectUrl(status: {
+  preview_url?: string
+  output_file_url?: string
+  output_url?: string
+}): string | null {
+  return status.preview_url || status.output_file_url || status.output_url || null
+}
+
+describe('(11) output_file_url field mapping', () => {
+  it('uses output_file_url when output_url is absent', () => {
+    expect(resolveDirectUrl({ output_file_url: 'https://cdn.example.com/audio.mp3' }))
+      .toBe('https://cdn.example.com/audio.mp3')
+  })
+
+  it('uses output_url when output_file_url is absent', () => {
+    expect(resolveDirectUrl({ output_url: 'https://cdn.example.com/audio.mp3' }))
+      .toBe('https://cdn.example.com/audio.mp3')
+  })
+
+  it('prefers preview_url over output_file_url and output_url', () => {
+    expect(resolveDirectUrl({
+      preview_url: 'https://cdn.example.com/preview.mp3',
+      output_file_url: 'https://cdn.example.com/file.mp3',
+      output_url: 'https://cdn.example.com/out.mp3',
+    })).toBe('https://cdn.example.com/preview.mp3')
+  })
+
+  it('prefers output_file_url over output_url when preview_url absent', () => {
+    expect(resolveDirectUrl({
+      output_file_url: 'https://cdn.example.com/file.mp3',
+      output_url: 'https://cdn.example.com/out.mp3',
+    })).toBe('https://cdn.example.com/file.mp3')
+  })
+
+  it('returns null when all URL fields are absent', () => {
+    expect(resolveDirectUrl({})).toBeNull()
+  })
+
+  it('returns null when all URL fields are empty strings (falsy)', () => {
+    expect(resolveDirectUrl({ output_file_url: '', output_url: '' })).toBeNull()
+  })
+
+  it('returns null when all URL fields are explicitly null', () => {
+    // Casting needed because the type uses optional (undefined) but APIs can return null.
+    expect(resolveDirectUrl({ output_file_url: null as unknown as string, output_url: null as unknown as string }))
+      .toBeNull()
+  })
+
+  it('does not set audioUrl when resolved URL is null (stale poll guard)', () => {
+    // A stale poll response with no URL should NOT overwrite a previously valid URL.
+    const existingAudioUrl = 'blob:http://localhost/valid-audio'
+    const stalePollStatus = { output_file_url: undefined, output_url: undefined, preview_url: undefined }
+    const resolved = resolveDirectUrl(stalePollStatus)
+    // Guard: only update state when a valid URL was resolved.
+    const nextAudioUrl = resolved !== null ? resolved : existingAudioUrl
+    expect(nextAudioUrl).toBe(existingAudioUrl)
+  })
+
+  it('sets audioUrl when output_file_url contains a valid URL (player integration)', () => {
+    const validUrl = 'https://cdn.example.com/arrangement-123.mp3'
+    const resolved = resolveDirectUrl({ output_file_url: validUrl })
+    // Simulate setAudioUrl being called only with a non-null resolved URL.
+    let capturedAudioUrl: string | null = null
+    if (resolved !== null) {
+      capturedAudioUrl = resolved
+    }
+    expect(capturedAudioUrl).toBe(validUrl)
   })
 })

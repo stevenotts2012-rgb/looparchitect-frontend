@@ -198,7 +198,10 @@ export default function GeneratePage() {
         const status = await getArrangementStatus(arrangementId)
         pollingErrorCountRef.current = 0
         setArrangementStatus(status)
-        console.log('[LoopArchitect] Polling status:', arrangementId, status.status)
+        console.log('[LoopArchitect] Polling status:', arrangementId, status.status,
+          '| output_file_url:', status.output_file_url,
+          '| output_url:', status.output_url,
+          '| preview_url:', status.preview_url)
 
         const isFinished =
           status.status === 'done' || status.status === 'completed' || status.status === 'failed'
@@ -214,16 +217,15 @@ export default function GeneratePage() {
           if (status.status === 'done' || status.status === 'completed') {
             // Only attempt the download if we haven't already succeeded or exhausted retries.
             if (!audioUrlRef.current && !audioUnavailable) {
-              // PRIMARY PATH: use preview_url or output_url directly when the backend
-              // provides a servable URL.  This avoids the blob download round-trip that
-              // can fail due to timeouts, 404s from ephemeral storage, or missing render
-              // output.  The direct URL works whether the file lives on a mounted volume,
-              // an S3 bucket, or a static-files directory.
-              const directUrl = status.preview_url || status.output_url
-              if (directUrl) {
-                console.log('[LoopArchitect] Using direct preview URL for', arrangementId, ':', directUrl)
+              // PRIMARY PATH: use preview_url, output_file_url, or output_url directly
+              // when the backend provides a servable URL.  output_file_url is checked
+              // alongside output_url because some backend versions use that field name.
+              const resolvedAudioUrl = status.preview_url || status.output_file_url || status.output_url
+              console.log('[LoopArchitect] Resolved audio URL for', arrangementId, ':', resolvedAudioUrl)
+              if (resolvedAudioUrl) {
+                console.log('[LoopArchitect] Calling setAudioUrl (direct) for', arrangementId, ':', resolvedAudioUrl)
                 audioDownloadAttemptsRef.current = 0
-                setAudioUrl(directUrl)
+                setAudioUrl(resolvedAudioUrl)
               } else {
                 // FALLBACK PATH: blob download via /download endpoint.
                 const attempts = audioDownloadAttemptsRef.current
@@ -359,6 +361,7 @@ export default function GeneratePage() {
             // can use without a round-trip download.
             const cachedDirectUrl =
               candidate.arrangementStatus?.preview_url ||
+              candidate.arrangementStatus?.output_file_url ||
               candidate.arrangementStatus?.output_url
             if (cachedDirectUrl) {
               console.log(
@@ -411,7 +414,9 @@ export default function GeneratePage() {
 
             if (!nextAudioUrl && (status.status === 'done' || status.status === 'completed')) {
               // PRIMARY: use a directly-servable URL from the status response.
-              const directUrl = status.preview_url || status.output_url
+              // output_file_url is checked alongside output_url because some backend
+              // versions use that field name.
+              const directUrl = status.preview_url || status.output_file_url || status.output_url
               if (directUrl) {
                 console.log(
                   `[variation-preview] direct-url-hit – candidate ${candidate.arrangement_id}`,
