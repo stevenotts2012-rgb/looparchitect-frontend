@@ -187,6 +187,12 @@ export interface ArrangementStatusResponse {
   preview_error?: string;
   preview_rendered_at?: string;
   preview_job_id?: string;
+  // Producer Engine V2 backward-compatible fields (present when PRODUCER_ENGINE_V2=true).
+  producer_plan?: ProducerPlanV2 | null;
+  producer_notes?: string[] | null;
+  quality_score?: QualityScore | null;
+  section_summary?: SectionSummaryItem[] | null;
+  decision_log?: DecisionLogEntry[] | null;
 }
 
 /**
@@ -449,10 +455,71 @@ export interface ProducerDebugSection {
   difference_from_previous?: { reasons?: string[] } | null;
 }
 
+// ============================================================================
+// Producer Engine V2 Types (Phase 1–5)
+// ============================================================================
+
+/** A single section entry in the V2 producer plan. */
+export interface ProducerPlanV2Section {
+  index: number;
+  section_type: string;
+  bars: number;
+  target_energy: number;
+  density: 'sparse' | 'medium' | 'full';
+  active_roles: string[];
+  muted_roles: string[];
+  variation_strategy: string;
+  transition_in: string;
+  transition_out: string;
+  rationale: string;
+}
+
+/** The complete V2 producer plan returned by ProducerPlanBuilderV2. */
+export interface ProducerPlanV2 {
+  sections: ProducerPlanV2Section[];
+  strategy: string;
+  total_sections: number;
+  engine_version?: string;
+}
+
+/** Quality scores from RenderQAService (0–100 heuristic). */
+export interface QualityScore {
+  structure_score: number;
+  transition_score: number;
+  audio_quality_score: number;
+  overall_score: number;
+}
+
+/** A single entry in the ProducerDecisionLog. */
+export interface DecisionLogEntry {
+  section_type: string;
+  decision: string;
+  rationale: string;
+}
+
+/** A compact section summary item for at-a-glance display. */
+export interface SectionSummaryItem {
+  index: number;
+  section_type: string;
+  bars: number;
+  energy: number;
+  roles: string[];
+}
+
 export interface ArrangementMetadataResponse {
   arrangement_id: number;
   producer_debug_report?: ProducerDebugSection[];
   timeline?: Record<string, unknown>;
+  /** V2 producer plan (present when PRODUCER_ENGINE_V2=true). */
+  producer_plan?: ProducerPlanV2 | null;
+  /** Plain-English notes from the ProducerDecisionLog. */
+  producer_notes?: string[] | null;
+  /** Render quality scores from RenderQAService. */
+  quality_score?: QualityScore | null;
+  /** Compact section summaries. */
+  section_summary?: SectionSummaryItem[] | null;
+  /** Full decision log entries. */
+  decision_log?: DecisionLogEntry[] | null;
 }
 
 export interface ArrangementPlanSection {
