@@ -277,25 +277,31 @@ export default function GeneratePage() {
             }
 
             // Load producer debug report and V2 producer insights
+            let metaHasProducerPlan = false
+            let metaHasProducerNotes = false
+            let metaHasQualityScore = false
+            let metaHasSectionSummary = false
+            let metaHasDecisionLog = false
             try {
               const meta = await getArrangementMetadata(arrangementId)
               setDebugReport(meta.producer_debug_report ?? null)
               // V2 fields from metadata (preferred source)
-              if (meta.producer_plan != null) setProducerPlanV2(meta.producer_plan)
-              if (meta.producer_notes != null) setProducerNotes(meta.producer_notes)
-              if (meta.quality_score != null) setQualityScore(meta.quality_score)
-              if (meta.section_summary != null) setSectionSummary(meta.section_summary)
-              if (meta.decision_log != null) setDecisionLog(meta.decision_log)
+              if (meta.producer_plan != null) { setProducerPlanV2(meta.producer_plan); metaHasProducerPlan = true }
+              if (meta.producer_notes != null) { setProducerNotes(meta.producer_notes); metaHasProducerNotes = true }
+              if (meta.quality_score != null) { setQualityScore(meta.quality_score); metaHasQualityScore = true }
+              if (meta.section_summary != null) { setSectionSummary(meta.section_summary); metaHasSectionSummary = true }
+              if (meta.decision_log != null) { setDecisionLog(meta.decision_log); metaHasDecisionLog = true }
             } catch (metaErr) {
               console.error('Failed to load arrangement metadata:', metaErr)
             }
 
-            // V2 fields may also arrive inline on the status response (fallback)
-            if (status.producer_plan != null && !producerPlanV2) setProducerPlanV2(status.producer_plan)
-            if (status.producer_notes != null && !producerNotes) setProducerNotes(status.producer_notes)
-            if (status.quality_score != null && !qualityScore) setQualityScore(status.quality_score)
-            if (status.section_summary != null && !sectionSummary) setSectionSummary(status.section_summary)
-            if (status.decision_log != null && !decisionLog) setDecisionLog(status.decision_log)
+            // V2 fields may also arrive inline on the status response; only use
+            // as fallback when metadata did not supply the field.
+            if (status.producer_plan != null && !metaHasProducerPlan) setProducerPlanV2(status.producer_plan)
+            if (status.producer_notes != null && !metaHasProducerNotes) setProducerNotes(status.producer_notes)
+            if (status.quality_score != null && !metaHasQualityScore) setQualityScore(status.quality_score)
+            if (status.section_summary != null && !metaHasSectionSummary) setSectionSummary(status.section_summary)
+            if (status.decision_log != null && !metaHasDecisionLog) setDecisionLog(status.decision_log)
           }
         }
       } catch (err) {
