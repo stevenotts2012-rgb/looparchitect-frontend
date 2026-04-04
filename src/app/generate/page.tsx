@@ -25,6 +25,10 @@ import {
   type ArrangementPreviewCandidate,
   type StylePresetResponse,
   type ProducerDebugSection,
+  type ProducerPlanV2,
+  type QualityScore,
+  type DecisionLogEntry,
+  type SectionSummaryItem,
 } from '@/../../api/client'
 import ArrangementStatus from '@/components/ArrangementStatus'
 import DownloadButton from '@/components/DownloadButton'
@@ -37,6 +41,7 @@ import { StyleSliders } from '@/components/StyleSliders'
 import { StyleTextInput } from '@/components/StyleTextInput'
 import { ProducerMoves } from '@/components/ProducerMoves'
 import { HelpButton } from '@/components/HelpButton'
+import { ProducerInsightsPanel } from '@/components/ProducerInsightsPanel'
 import { SimpleStyleProfile } from '@/lib/styleSchema'
 
 export default function GeneratePage() {
@@ -85,6 +90,12 @@ export default function GeneratePage() {
   const [aiPlanDraft, setAiPlanDraft] = useState<ArrangementPlanSection[] | null>(null)
   const [aiPlanMeta, setAiPlanMeta] = useState<ArrangementPlanResponse['planner_meta'] | null>(null)
   const [aiPlanValidation, setAiPlanValidation] = useState<ArrangementPlanResponse['validation'] | null>(null)
+  // Producer Engine V2 state
+  const [producerPlanV2, setProducerPlanV2] = useState<ProducerPlanV2 | null>(null)
+  const [producerNotes, setProducerNotes] = useState<string[] | null>(null)
+  const [qualityScore, setQualityScore] = useState<QualityScore | null>(null)
+  const [sectionSummary, setSectionSummary] = useState<SectionSummaryItem[] | null>(null)
+  const [decisionLog, setDecisionLog] = useState<DecisionLogEntry[] | null>(null)
 
   // V2: Natural language style input
   const [styleMode, setStyleMode] = useState<'preset' | 'naturalLanguage'>('preset')
@@ -265,13 +276,26 @@ export default function GeneratePage() {
               }
             }
 
-            // Load producer debug report
+            // Load producer debug report and V2 producer insights
             try {
               const meta = await getArrangementMetadata(arrangementId)
               setDebugReport(meta.producer_debug_report ?? null)
+              // V2 fields from metadata (preferred source)
+              if (meta.producer_plan != null) setProducerPlanV2(meta.producer_plan)
+              if (meta.producer_notes != null) setProducerNotes(meta.producer_notes)
+              if (meta.quality_score != null) setQualityScore(meta.quality_score)
+              if (meta.section_summary != null) setSectionSummary(meta.section_summary)
+              if (meta.decision_log != null) setDecisionLog(meta.decision_log)
             } catch (metaErr) {
               console.error('Failed to load arrangement metadata:', metaErr)
             }
+
+            // V2 fields may also arrive inline on the status response (fallback)
+            if (status.producer_plan != null && !producerPlanV2) setProducerPlanV2(status.producer_plan)
+            if (status.producer_notes != null && !producerNotes) setProducerNotes(status.producer_notes)
+            if (status.quality_score != null && !qualityScore) setQualityScore(status.quality_score)
+            if (status.section_summary != null && !sectionSummary) setSectionSummary(status.section_summary)
+            if (status.decision_log != null && !decisionLog) setDecisionLog(status.decision_log)
           }
         }
       } catch (err) {
@@ -660,6 +684,11 @@ export default function GeneratePage() {
     setAiPlanDraft(null)
     setAiPlanMeta(null)
     setAiPlanValidation(null)
+    setProducerPlanV2(null)
+    setProducerNotes(null)
+    setQualityScore(null)
+    setSectionSummary(null)
+    setDecisionLog(null)
     setError(null)
     setAudioUnavailable(false)
     audioDownloadAttemptsRef.current = 0
@@ -769,6 +798,11 @@ export default function GeneratePage() {
     setAiPlanDraft(null)
     setAiPlanMeta(null)
     setAiPlanValidation(null)
+    setProducerPlanV2(null)
+    setProducerNotes(null)
+    setQualityScore(null)
+    setSectionSummary(null)
+    setDecisionLog(null)
     setAudioUnavailable(false)
     audioDownloadAttemptsRef.current = 0
     if (audioUrl) {
@@ -1902,6 +1936,19 @@ export default function GeneratePage() {
                 </div>
               )}
 
+              {/* Producer Engine V2 Insights */}
+              {(arrangementStatus.status === 'done' || arrangementStatus.status === 'completed') && (
+                <div className="bg-gray-900/50 border border-gray-800 rounded-lg p-6">
+                  <ProducerInsightsPanel
+                    producerPlan={producerPlanV2}
+                    producerNotes={producerNotes}
+                    qualityScore={qualityScore}
+                    sectionSummary={sectionSummary}
+                    decisionLog={decisionLog}
+                  />
+                </div>
+              )}
+
               {/* Actions */}
               <div className="flex flex-col sm:flex-row gap-4">
                 <button
@@ -1913,6 +1960,11 @@ export default function GeneratePage() {
                     setAiPlanDraft(null)
                     setAiPlanMeta(null)
                     setAiPlanValidation(null)
+                    setProducerPlanV2(null)
+                    setProducerNotes(null)
+                    setQualityScore(null)
+                    setSectionSummary(null)
+                    setDecisionLog(null)
                     setError(null)
                     setAudioUnavailable(false)
                     audioDownloadAttemptsRef.current = 0
