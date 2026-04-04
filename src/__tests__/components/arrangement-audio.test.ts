@@ -39,6 +39,8 @@
  *    prematurely.
  */
 
+import { resolveArrangementAudioUrl } from '@/../../api/client'
+
 // ---------------------------------------------------------------------------
 // Pure-logic helpers extracted from generate/page.tsx for isolated testing
 // ---------------------------------------------------------------------------
@@ -956,12 +958,10 @@ describe('(10) handleRetryPreview – local state reset', () => {
 })
 
 // ---------------------------------------------------------------------------
-// (12) resolveArrangementAudioUrl – centralized helper (api/client export)
+// (11) resolveArrangementAudioUrl – centralized helper (api/client export)
 // ---------------------------------------------------------------------------
 
-import { resolveArrangementAudioUrl } from '@/../../api/client'
-
-describe('(12) resolveArrangementAudioUrl – centralized helper', () => {
+describe('(11) resolveArrangementAudioUrl – centralized helper', () => {
   it('returns preview_url when present', () => {
     expect(resolveArrangementAudioUrl({ preview_url: 'https://cdn.example.com/p.mp3' }))
       .toBe('https://cdn.example.com/p.mp3')
@@ -1006,7 +1006,7 @@ describe('(12) resolveArrangementAudioUrl – centralized helper', () => {
 })
 
 // ---------------------------------------------------------------------------
-// (13) needsAudio re-poll – discovers freshly-available preview_url
+// (12) needsAudio re-poll – discovers freshly-available preview_url
 // ---------------------------------------------------------------------------
 
 /**
@@ -1047,7 +1047,7 @@ async function simulateNeedsAudioTick(
   return { audioUrl: candidate.audioUrl ?? null, audioUnavailable: false, arrangementStatus: freshStatus }
 }
 
-describe('(13) needsAudio re-poll – fresh preview_url discovered after status=done', () => {
+describe('(12) needsAudio re-poll – fresh preview_url discovered after status=done', () => {
   it('uses preview_url from a fresh re-poll even though the cached status had no URL', async () => {
     const candidate: CandidateState = { arrangement_id: 1, status: 'done', audioUrl: null }
     // Stale cached status: no URL (preview worker hadn't finished yet)
@@ -1196,11 +1196,11 @@ describe('(13) needsAudio re-poll – fresh preview_url discovered after status=
 })
 
 // ---------------------------------------------------------------------------
-// (11) output_file_url field mapping
+// (13) output_file_url field mapping
 // ---------------------------------------------------------------------------
 
 /**
- * Simplified URL resolution helper used in the (11) test suite.
+ * Simplified URL resolution helper used in the (13) test suite.
  * Mirrors the direct-URL priority used in the main arrangement poll:
  *   const resolvedAudioUrl = preview_url || output_file_url || output_url
  */
@@ -1212,7 +1212,7 @@ function resolveDirectUrl(status: {
   return status.preview_url || status.output_file_url || status.output_url || null
 }
 
-describe('(11) output_file_url field mapping', () => {
+describe('(13) output_file_url field mapping', () => {
   it('uses output_file_url when output_url is absent', () => {
     expect(resolveDirectUrl({ output_file_url: 'https://cdn.example.com/audio.mp3' }))
       .toBe('https://cdn.example.com/audio.mp3')
