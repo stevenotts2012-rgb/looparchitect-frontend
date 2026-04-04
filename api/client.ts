@@ -175,6 +175,8 @@ export interface ArrangementStatusResponse {
   error_message?: string;
   output_file?: string;
   output_url?: string;
+  /** Alternative field name used by some backend versions for the audio URL. */
+  output_file_url?: string;
   stems_zip_url?: string;
   export_s3_key?: string;
   // Preview render lifecycle fields – populated by the async preview worker.
