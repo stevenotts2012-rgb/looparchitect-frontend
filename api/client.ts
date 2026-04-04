@@ -189,6 +189,23 @@ export interface ArrangementStatusResponse {
   preview_job_id?: string;
 }
 
+/**
+ * Resolve a directly-playable audio URL from an arrangement status response.
+ *
+ * Single source of truth for audio URL field resolution.  Checks fields in
+ * priority order: preview_url → output_file_url → output_url.  Returns null
+ * when none of the fields carry a truthy value.
+ *
+ * Use this helper everywhere a candidate or status response needs to be
+ * inspected for a playable URL so that field-name normalisation is never
+ * duplicated across the codebase.
+ */
+export function resolveArrangementAudioUrl(
+  response: Partial<Pick<ArrangementStatusResponse, 'preview_url' | 'output_file_url' | 'output_url'>>
+): string | null {
+  return response.preview_url || response.output_file_url || response.output_url || null;
+}
+
 export interface DawExportResponse {
   arrangement_id: number;
   ready_for_export: boolean;

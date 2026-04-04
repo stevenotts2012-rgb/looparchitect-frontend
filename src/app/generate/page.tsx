@@ -16,6 +16,7 @@ import {
   downloadLoop,
   validateStyle,
   retryPreviewRender,
+  resolveArrangementAudioUrl,
   LoopArchitectApiError,
   type Arrangement,
   type ArrangementPlanResponse,
@@ -218,9 +219,9 @@ export default function GeneratePage() {
             // Only attempt the download if we haven't already succeeded or exhausted retries.
             if (!audioUrlRef.current && !audioUnavailable) {
               // PRIMARY PATH: use preview_url, output_file_url, or output_url directly
-              // when the backend provides a servable URL.  output_file_url is checked
-              // alongside output_url because some backend versions use that field name.
-              const resolvedAudioUrl = status.preview_url || status.output_file_url || status.output_url
+              // when the backend provides a servable URL.  resolveArrangementAudioUrl
+              // centralises field-name normalisation across both polling paths.
+              const resolvedAudioUrl = resolveArrangementAudioUrl(status)
               console.log('[LoopArchitect] Resolved audio URL for', arrangementId, ':', resolvedAudioUrl)
               if (resolvedAudioUrl) {
                 console.log('[LoopArchitect] Calling setAudioUrl (direct) for', arrangementId, ':', resolvedAudioUrl)
@@ -357,19 +358,39 @@ export default function GeneratePage() {
           // The candidate status is already done/completed; we only need to
           // (re)attempt downloading the audio blob.
           if (needsAudio) {
-            // Check if the cached arrangementStatus already has a direct URL we
-            // can use without a round-trip download.
-            const cachedDirectUrl =
-              candidate.arrangementStatus?.preview_url ||
-              candidate.arrangementStatus?.output_file_url ||
-              candidate.arrangementStatus?.output_url
-            if (cachedDirectUrl) {
+            // ROOT CAUSE FIX: Re-poll the backend before every blob-download attempt
+            // so that a preview_url set asynchronously by the preview worker is
+            // discovered.  Previously, only the stale cached arrangementStatus was
+            // checked, meaning a freshly-available preview_url was never picked up
+            // and all retries were wasted, ending in audioUnavailable prematurely.
+            let freshStatus: ArrangementStatusResponse | null | undefined = candidate.arrangementStatus
+            try {
+              freshStatus = await getArrangementStatus(candidate.arrangement_id)
               console.log(
-                `[variation-preview] direct-url-hit (retry path) – candidate ${candidate.arrangement_id}`,
-                cachedDirectUrl
+                `[variation-preview] needs-audio-repoll – candidate ${candidate.arrangement_id}`,
+                'preview_url:', freshStatus.preview_url,
+                'output_file_url:', freshStatus.output_file_url,
+                'output_url:', freshStatus.output_url,
+              )
+            } catch (repollError) {
+              console.warn(
+                `[variation-preview] needs-audio-repoll-failed – candidate ${candidate.arrangement_id}:`,
+                repollError
+              )
+            }
+
+            const freshDirectUrl = resolveArrangementAudioUrl(freshStatus ?? {})
+            if (freshDirectUrl) {
+              console.log(
+                `[variation-preview] direct-url-hit (fresh repoll) – candidate ${candidate.arrangement_id}`,
+                freshDirectUrl
               )
               candidateDownloadAttemptsRef.current.delete(candidate.arrangement_id)
-              return { ...candidate, audioUrl: cachedDirectUrl }
+              return {
+                ...candidate,
+                audioUrl: freshDirectUrl,
+                arrangementStatus: freshStatus ?? candidate.arrangementStatus,
+              }
             }
 
             const attempts = candidateDownloadAttemptsRef.current.get(candidate.arrangement_id) ?? 0
@@ -380,7 +401,11 @@ export default function GeneratePage() {
               console.warn(
                 `[variation-preview] max-attempts-reached – candidate ${candidate.arrangement_id} – marking as unavailable`
               )
-              return { ...candidate, audioUnavailable: true }
+              return {
+                ...candidate,
+                audioUnavailable: true,
+                arrangementStatus: freshStatus ?? candidate.arrangementStatus,
+              }
             }
             candidateDownloadAttemptsRef.current.set(candidate.arrangement_id, attempts + 1)
             try {
@@ -393,14 +418,18 @@ export default function GeneratePage() {
               )
               // Download succeeded – remove the attempt counter.
               candidateDownloadAttemptsRef.current.delete(candidate.arrangement_id)
-              return { ...candidate, audioUrl: url }
+              return {
+                ...candidate,
+                audioUrl: url,
+                arrangementStatus: freshStatus ?? candidate.arrangementStatus,
+              }
             } catch (audioError) {
               console.error(
                 `[variation-preview] fetch-failed – candidate ${candidate.arrangement_id}:`,
                 audioError
               )
               // Will be retried on the next tick until MAX_PREVIEW_DOWNLOAD_ATTEMPTS.
-              return candidate
+              return { ...candidate, arrangementStatus: freshStatus ?? candidate.arrangementStatus }
             }
           }
 
@@ -414,9 +443,7 @@ export default function GeneratePage() {
 
             if (!nextAudioUrl && (status.status === 'done' || status.status === 'completed')) {
               // PRIMARY: use a directly-servable URL from the status response.
-              // output_file_url is checked alongside output_url because some backend
-              // versions use that field name.
-              const directUrl = status.preview_url || status.output_file_url || status.output_url
+              const directUrl = resolveArrangementAudioUrl(status)
               if (directUrl) {
                 console.log(
                   `[variation-preview] direct-url-hit – candidate ${candidate.arrangement_id}`,

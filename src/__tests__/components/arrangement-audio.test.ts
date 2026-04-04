@@ -31,6 +31,12 @@
  *    `output_file_url` or `output_url` depending on the backend version.
  *    Only `output_url` was previously read, so `output_file_url` was silently
  *    ignored, leaving the player at 0:00 / 0:00 with no audio.
+ *
+ *  - The needsAudio retry path only checked the stale cached arrangementStatus
+ *    for a preview_url and never re-polled the backend.  When the async preview
+ *    worker set preview_url after status=done, the frontend never discovered it,
+ *    exhausted all blob-download retries, and marked the preview unavailable
+ *    prematurely.
  */
 
 // ---------------------------------------------------------------------------
@@ -950,6 +956,246 @@ describe('(10) handleRetryPreview – local state reset', () => {
 })
 
 // ---------------------------------------------------------------------------
+// (12) resolveArrangementAudioUrl – centralized helper (api/client export)
+// ---------------------------------------------------------------------------
+
+import { resolveArrangementAudioUrl } from '@/../../api/client'
+
+describe('(12) resolveArrangementAudioUrl – centralized helper', () => {
+  it('returns preview_url when present', () => {
+    expect(resolveArrangementAudioUrl({ preview_url: 'https://cdn.example.com/p.mp3' }))
+      .toBe('https://cdn.example.com/p.mp3')
+  })
+
+  it('returns output_file_url when preview_url is absent', () => {
+    expect(resolveArrangementAudioUrl({ output_file_url: 'https://cdn.example.com/f.mp3' }))
+      .toBe('https://cdn.example.com/f.mp3')
+  })
+
+  it('returns output_url when preview_url and output_file_url are absent', () => {
+    expect(resolveArrangementAudioUrl({ output_url: 'https://cdn.example.com/o.mp3' }))
+      .toBe('https://cdn.example.com/o.mp3')
+  })
+
+  it('prefers preview_url over output_file_url and output_url', () => {
+    expect(resolveArrangementAudioUrl({
+      preview_url: 'https://cdn.example.com/preview.mp3',
+      output_file_url: 'https://cdn.example.com/file.mp3',
+      output_url: 'https://cdn.example.com/out.mp3',
+    })).toBe('https://cdn.example.com/preview.mp3')
+  })
+
+  it('prefers output_file_url over output_url when preview_url is absent', () => {
+    expect(resolveArrangementAudioUrl({
+      output_file_url: 'https://cdn.example.com/file.mp3',
+      output_url: 'https://cdn.example.com/out.mp3',
+    })).toBe('https://cdn.example.com/file.mp3')
+  })
+
+  it('returns null when no URL fields are present', () => {
+    expect(resolveArrangementAudioUrl({})).toBeNull()
+  })
+
+  it('returns null when all URL fields are empty strings (falsy)', () => {
+    expect(resolveArrangementAudioUrl({ preview_url: '', output_file_url: '', output_url: '' })).toBeNull()
+  })
+
+  it('returns null when called with explicit undefined values', () => {
+    expect(resolveArrangementAudioUrl({ preview_url: undefined, output_file_url: undefined, output_url: undefined })).toBeNull()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// (13) needsAudio re-poll – discovers freshly-available preview_url
+// ---------------------------------------------------------------------------
+
+/**
+ * Mirrors the fixed needsAudio path in pollCandidates:
+ *
+ *   1. Re-poll getArrangementStatus to get the latest status response.
+ *   2. If a direct URL is found in the FRESH response → use it immediately.
+ *   3. Only fall back to blob download / increment attempt counter when the
+ *      fresh poll also returns no URL.
+ *
+ * Previously only the stale cached arrangementStatus was checked, so a
+ * preview_url set by the async preview worker after status=done was never
+ * discovered.
+ */
+async function simulateNeedsAudioTick(
+  candidate: CandidateState & { arrangementStatus?: { preview_url?: string | null; output_file_url?: string | null; output_url?: string | null } | null },
+  freshStatusResponse: { preview_url?: string | null; output_file_url?: string | null; output_url?: string | null } | null,
+  blobDownloadResult: string | null,
+  currentAttempts: number,
+): Promise<{ audioUrl: string | null; audioUnavailable: boolean; arrangementStatus: typeof freshStatusResponse }> {
+  // Simulate fresh re-poll (null = poll failed → keep cached)
+  const freshStatus = freshStatusResponse ?? candidate.arrangementStatus ?? null
+
+  // Check fresh response first (the fix)
+  const freshDirectUrl = resolveArrangementAudioUrl(freshStatus ?? {})
+  if (freshDirectUrl) {
+    return { audioUrl: freshDirectUrl, audioUnavailable: false, arrangementStatus: freshStatus }
+  }
+
+  // No direct URL in fresh response → fall back to blob download attempts
+  if (currentAttempts >= MAX_PREVIEW_DOWNLOAD_ATTEMPTS) {
+    return { audioUrl: null, audioUnavailable: true, arrangementStatus: freshStatus }
+  }
+  if (blobDownloadResult !== null) {
+    return { audioUrl: blobDownloadResult, audioUnavailable: false, arrangementStatus: freshStatus }
+  }
+  // Blob download failed – keep candidate unchanged (will retry next tick)
+  return { audioUrl: candidate.audioUrl ?? null, audioUnavailable: false, arrangementStatus: freshStatus }
+}
+
+describe('(13) needsAudio re-poll – fresh preview_url discovered after status=done', () => {
+  it('uses preview_url from a fresh re-poll even though the cached status had no URL', async () => {
+    const candidate: CandidateState = { arrangement_id: 1, status: 'done', audioUrl: null }
+    // Stale cached status: no URL (preview worker hadn't finished yet)
+    const cachedStatus = { preview_url: null, output_file_url: null, output_url: null }
+    // Fresh response: preview worker has now set preview_url
+    const freshStatus = { preview_url: 'https://cdn.example.com/preview-1.mp3', output_file_url: null, output_url: null }
+
+    const result = await simulateNeedsAudioTick(
+      { ...candidate, arrangementStatus: cachedStatus },
+      freshStatus,
+      null, // blob download not needed
+      0,
+    )
+    expect(result.audioUrl).toBe('https://cdn.example.com/preview-1.mp3')
+    expect(result.audioUnavailable).toBe(false)
+  })
+
+  it('uses output_file_url from fresh re-poll when preview_url is absent', async () => {
+    const candidate: CandidateState = { arrangement_id: 2, status: 'done', audioUrl: null }
+    const freshStatus = { output_file_url: 'https://cdn.example.com/file-2.mp3' }
+
+    const result = await simulateNeedsAudioTick(
+      { ...candidate, arrangementStatus: null },
+      freshStatus,
+      null,
+      0,
+    )
+    expect(result.audioUrl).toBe('https://cdn.example.com/file-2.mp3')
+    expect(result.audioUnavailable).toBe(false)
+  })
+
+  it('falls back to blob download when fresh re-poll still returns no URL', async () => {
+    const candidate: CandidateState = { arrangement_id: 3, status: 'done', audioUrl: null }
+    const freshStatus = { preview_url: null, output_file_url: null, output_url: null }
+    const blobUrl = 'blob:http://localhost/blob-3'
+
+    const result = await simulateNeedsAudioTick(
+      { ...candidate, arrangementStatus: null },
+      freshStatus,
+      blobUrl,
+      0,
+    )
+    expect(result.audioUrl).toBe(blobUrl)
+    expect(result.audioUnavailable).toBe(false)
+  })
+
+  it('marks unavailable after max attempts even when re-poll finds no URL', async () => {
+    const candidate: CandidateState = { arrangement_id: 4, status: 'done', audioUrl: null }
+    const freshStatus = { preview_url: null }
+
+    const result = await simulateNeedsAudioTick(
+      { ...candidate, arrangementStatus: null },
+      freshStatus,
+      null, // blob download also fails
+      MAX_PREVIEW_DOWNLOAD_ATTEMPTS, // already at max
+    )
+    expect(result.audioUrl).toBeNull()
+    expect(result.audioUnavailable).toBe(true)
+  })
+
+  it('stale poll after fresh re-poll returning a URL cannot wipe it (functional merge guard)', () => {
+    // After the re-poll succeeds, the candidate has audioUrl set.
+    const readyCandidate: CandidateState = {
+      arrangement_id: 5, status: 'done', audioUrl: 'https://cdn.example.com/preview-5.mp3',
+    }
+    // Stale concurrent poll returns candidate without the URL
+    const stalePollUpdate: CandidateState = { arrangement_id: 5, status: 'done', audioUrl: null }
+
+    // Functional merge guard must preserve the existing URL
+    const merged = functionalMerge([readyCandidate], [stalePollUpdate])
+    expect(merged[0].audioUrl).toBe('https://cdn.example.com/preview-5.mp3')
+  })
+
+  it('if fresh re-poll itself fails (network error) the stale cached status is used as fallback', async () => {
+    const candidate: CandidateState = { arrangement_id: 6, status: 'done', audioUrl: null }
+    // Stale cached status still has no URL
+    const cachedStatus = { preview_url: null, output_file_url: null, output_url: null }
+    // freshStatusResponse = null simulates a re-poll failure
+    const blobUrl = 'blob:http://localhost/fallback-6'
+
+    const result = await simulateNeedsAudioTick(
+      { ...candidate, arrangementStatus: cachedStatus },
+      null, // poll failed
+      blobUrl,
+      0,
+    )
+    // Falls through to blob download because stale cached status also has no URL
+    expect(result.audioUrl).toBe(blobUrl)
+    expect(result.audioUnavailable).toBe(false)
+  })
+
+  it('arrangement response with output_file_url maps correctly (Phase 5 regression check)', () => {
+    const fileUrl = 'https://cdn.example.com/output/123.mp3'
+    expect(resolveArrangementAudioUrl({ output_file_url: fileUrl })).toBe(fileUrl)
+  })
+
+  it('arrangement response with output_url maps correctly (Phase 5 regression check)', () => {
+    const outputUrl = 'https://cdn.example.com/output/456.wav'
+    expect(resolveArrangementAudioUrl({ output_url: outputUrl })).toBe(outputUrl)
+  })
+
+  it('valid URL from fresh re-poll produces a playable arrangement preview state', async () => {
+    const candidate: CandidateState = { arrangement_id: 7, status: 'done', audioUrl: null }
+    const freshStatus = { preview_url: 'https://cdn.example.com/ready.mp3' }
+
+    const result = await simulateNeedsAudioTick(
+      { ...candidate, arrangementStatus: null },
+      freshStatus,
+      null,
+      0,
+    )
+    // Simulate what selectedPreviewId sync would do
+    const resolvePreviewState = (audioUrl: string | null, audioUnavailable: boolean) => {
+      if (audioUrl != null) return 'player'
+      if (audioUnavailable) return 'fallback'
+      return 'spinner'
+    }
+    expect(resolvePreviewState(result.audioUrl, result.audioUnavailable)).toBe('player')
+  })
+
+  it('done-without-url triggers retry path (hasPendingCandidates stays true until retries exhausted)', () => {
+    const doneNoAudio: CandidateState = { arrangement_id: 8, status: 'done', audioUrl: null }
+    expect(hasPendingCandidates([doneNoAudio])).toBe(true)
+
+    // After retries exhausted, hasPendingCandidates must return false so interval stops
+    const exhausted = applyAudioRetry(doneNoAudio, MAX_PREVIEW_DOWNLOAD_ATTEMPTS, null)
+    expect(exhausted.audioUnavailable).toBe(true)
+    expect(hasPendingCandidates([exhausted])).toBe(false)
+  })
+
+  it('variation preview logic remains unchanged (regression: shouldCandidateBeProcessed + applyAudioRetry)', () => {
+    // All variation preview helpers continue to work as before
+    const queued: CandidateState = { arrangement_id: 10, status: 'queued', audioUrl: null }
+    expect(shouldCandidateBeProcessed(queued)).toBe(true)
+
+    const processing: CandidateState = { arrangement_id: 10, status: 'processing', audioUrl: null }
+    expect(shouldCandidateBeProcessed(processing)).toBe(true)
+
+    const doneWithAudio: CandidateState = { arrangement_id: 10, status: 'done', audioUrl: 'blob:http://localhost/v' }
+    expect(shouldCandidateBeProcessed(doneWithAudio)).toBe(false)
+
+    const ready = applyAudioRetry({ arrangement_id: 10, status: 'done', audioUrl: null }, 0, 'blob:http://localhost/v')
+    expect(ready.audioUrl).toBe('blob:http://localhost/v')
+    expect(ready.audioUnavailable).toBe(false)
+  })
+})
+
+// ---------------------------------------------------------------------------
 // (11) output_file_url field mapping
 // ---------------------------------------------------------------------------
 
@@ -959,9 +1205,9 @@ describe('(10) handleRetryPreview – local state reset', () => {
  *   const resolvedAudioUrl = preview_url || output_file_url || output_url
  */
 function resolveDirectUrl(status: {
-  preview_url?: string
-  output_file_url?: string
-  output_url?: string
+  preview_url?: string | null
+  output_file_url?: string | null
+  output_url?: string | null
 }): string | null {
   return status.preview_url || status.output_file_url || status.output_url || null
 }
