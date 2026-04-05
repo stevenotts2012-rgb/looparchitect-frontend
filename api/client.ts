@@ -303,6 +303,12 @@ export async function generateArrangement(
     useAiParsing?: boolean;
     producerMoves?: string[];
     arrangementPlan?: ArrangementPlanResponse['plan'];
+    /** ID returned by analyzeReferenceTrack; omit when no reference is used. */
+    referenceAnalysisId?: string;
+    /** How closely to follow the reference structure/energy. Default: 'medium'. */
+    adaptationStrength?: 'loose' | 'medium' | 'close';
+    /** Which aspects of the reference to use as guidance. Default: 'structure_energy'. */
+    guidanceMode?: 'structure' | 'energy' | 'structure_energy';
   }
 ): Promise<GenerateArrangementResponse> {
   try {
@@ -332,6 +338,9 @@ export async function generateArrangement(
       use_ai_parsing?: boolean;
       producer_moves?: string[];
       arrangement_plan?: ArrangementPlanResponse['plan'];
+      reference_analysis_id?: string;
+      adaptation_strength?: string;
+      guidance_mode?: string;
     } = {
       loop_id: loopId,
       target_seconds: targetSeconds,
@@ -349,6 +358,9 @@ export async function generateArrangement(
     if (options?.useAiParsing !== undefined) requestBody.use_ai_parsing = options.useAiParsing;
     if (options?.producerMoves) requestBody.producer_moves = options.producerMoves;
     if (options?.arrangementPlan) requestBody.arrangement_plan = options.arrangementPlan;
+    if (options?.referenceAnalysisId) requestBody.reference_analysis_id = options.referenceAnalysisId;
+    if (options?.adaptationStrength) requestBody.adaptation_strength = options.adaptationStrength;
+    if (options?.guidanceMode) requestBody.guidance_mode = options.guidanceMode;
 
     const response = await fetch(apiUrl('/v1/arrangements/generate'), {
       method: 'POST',
@@ -520,6 +532,27 @@ export interface ArrangementMetadataResponse {
   section_summary?: SectionSummaryItem[] | null;
   /** Full decision log entries. */
   decision_log?: DecisionLogEntry[] | null;
+  /** Reference-guided arrangement: human-readable structure summary. */
+  reference_structure_summary?: string | null;
+}
+
+// ============================================================================
+// Reference Track Analysis Types
+// ============================================================================
+
+/** High-level summary returned by the reference analysis endpoint. */
+export interface ReferenceAnalysisSummary {
+  section_count?: number;
+  detected_tempo?: number;
+  estimated_duration?: number;
+  structure_overview?: string;
+  energy_profile?: string;
+}
+
+export interface ReferenceAnalysisResponse {
+  reference_analysis_id: string;
+  summary?: ReferenceAnalysisSummary;
+  status?: string;
 }
 
 export interface ArrangementPlanSection {
@@ -1108,6 +1141,41 @@ export async function fetchLoopPlayUrl(loopId: number): Promise<string> {
     throw new LoopArchitectApiError('No URL returned from API', 500, data);
   }
   return data.url;
+}
+
+/**
+ * Analyze a reference audio file to extract structural and energy guidance.
+ * The returned reference_analysis_id can be passed to generateArrangement
+ * to guide the arrangement output.
+ *
+ * The file is sent directly to the backend (bypassing the Vercel proxy) to
+ * avoid request-body size limits.
+ */
+export async function analyzeReferenceTrack(
+  file: File
+): Promise<ReferenceAnalysisResponse> {
+  try {
+    const formData = new FormData();
+    formData.append('file', file);
+
+    const url = getUploadUrl('/v1/reference/analyze');
+    const response = await fetch(url, {
+      method: 'POST',
+      // No Content-Type header – browser sets multipart/form-data with boundary.
+      // No x-correlation-id – custom headers force a CORS preflight OPTIONS request.
+      body: formData,
+    });
+
+    return handleResponse<ReferenceAnalysisResponse>(response);
+  } catch (error) {
+    if (error instanceof LoopArchitectApiError) {
+      throw error;
+    }
+    throw new LoopArchitectApiError(
+      `Failed to analyze reference track: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      500
+    );
+  }
 }
 
 // Export error class for external use
