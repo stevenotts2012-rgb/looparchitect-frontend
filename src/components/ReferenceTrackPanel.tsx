@@ -45,7 +45,8 @@ export default function ReferenceTrackPanel({
   const isSuccess = analysisId !== null
 
   const validateFile = (file: File): string | null => {
-    const ext = file.name.toLowerCase().slice(file.name.lastIndexOf('.'))
+    const dotIndex = file.name.lastIndexOf('.')
+    const ext = dotIndex === -1 ? '' : file.name.toLowerCase().slice(dotIndex)
     const validExt = ACCEPTED_EXTENSIONS.includes(ext)
     const validType = ACCEPTED_TYPES.some((t) => file.type === t) || file.type.startsWith('audio/')
     if (!validExt && !validType) {
