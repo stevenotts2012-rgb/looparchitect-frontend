@@ -29,6 +29,7 @@ import {
   type QualityScore,
   type DecisionLogEntry,
   type SectionSummaryItem,
+  type ReferenceAnalysisSummary,
 } from '@/../../api/client'
 import ArrangementStatus from '@/components/ArrangementStatus'
 import DownloadButton from '@/components/DownloadButton'
@@ -42,6 +43,8 @@ import { StyleTextInput } from '@/components/StyleTextInput'
 import { ProducerMoves } from '@/components/ProducerMoves'
 import { HelpButton } from '@/components/HelpButton'
 import { ProducerInsightsPanel } from '@/components/ProducerInsightsPanel'
+import ReferenceTrackPanel, { type AdaptationStrength, type GuidanceMode } from '@/components/ReferenceTrackPanel'
+import { ReferenceGuidancePanel } from '@/components/ReferenceGuidancePanel'
 import { SimpleStyleProfile } from '@/lib/styleSchema'
 
 export default function GeneratePage() {
@@ -96,6 +99,18 @@ export default function GeneratePage() {
   const [qualityScore, setQualityScore] = useState<QualityScore | null>(null)
   const [sectionSummary, setSectionSummary] = useState<SectionSummaryItem[] | null>(null)
   const [decisionLog, setDecisionLog] = useState<DecisionLogEntry[] | null>(null)
+
+  // Reference-guided arrangement state
+  const [referenceAnalysisId, setReferenceAnalysisId] = useState<string | null>(null)
+  const [referenceSummary, setReferenceSummary] = useState<ReferenceAnalysisSummary | undefined>(undefined)
+  const [adaptationStrength, setAdaptationStrength] = useState<AdaptationStrength>('medium')
+  const [guidanceMode, setGuidanceMode] = useState<GuidanceMode>('structure_energy')
+  /** Tracks reference params that were active when the last arrangement was generated. */
+  const [activeReferenceAnalysisId, setActiveReferenceAnalysisId] = useState<string | null>(null)
+  const [activeReferenceSummary, setActiveReferenceSummary] = useState<ReferenceAnalysisSummary | undefined>(undefined)
+  const [activeAdaptationStrength, setActiveAdaptationStrength] = useState<AdaptationStrength>('medium')
+  const [activeGuidanceMode, setActiveGuidanceMode] = useState<GuidanceMode>('structure_energy')
+  const [referenceStructureSummary, setReferenceStructureSummary] = useState<string | null>(null)
 
   // V2: Natural language style input
   const [styleMode, setStyleMode] = useState<'preset' | 'naturalLanguage'>('preset')
@@ -291,6 +306,7 @@ export default function GeneratePage() {
               if (meta.quality_score != null) { setQualityScore(meta.quality_score); metaHasQualityScore = true }
               if (meta.section_summary != null) { setSectionSummary(meta.section_summary); metaHasSectionSummary = true }
               if (meta.decision_log != null) { setDecisionLog(meta.decision_log); metaHasDecisionLog = true }
+              if (meta.reference_structure_summary != null) { setReferenceStructureSummary(meta.reference_structure_summary) }
             } catch (metaErr) {
               console.error('Failed to load arrangement metadata:', metaErr)
             }
@@ -698,6 +714,9 @@ export default function GeneratePage() {
     setError(null)
     setAudioUnavailable(false)
     audioDownloadAttemptsRef.current = 0
+    setActiveReferenceAnalysisId(null)
+    setActiveReferenceSummary(undefined)
+    setReferenceStructureSummary(null)
     if (audioUrl) {
       URL.revokeObjectURL(audioUrl)
       setAudioUrl(null)
@@ -811,6 +830,11 @@ export default function GeneratePage() {
     setDecisionLog(null)
     setAudioUnavailable(false)
     audioDownloadAttemptsRef.current = 0
+    setActiveReferenceAnalysisId(referenceAnalysisId)
+    setActiveReferenceSummary(referenceSummary)
+    setActiveAdaptationStrength(adaptationStrength)
+    setActiveGuidanceMode(guidanceMode)
+    setReferenceStructureSummary(null)
     if (audioUrl) {
       URL.revokeObjectURL(audioUrl)
       setAudioUrl(null)
@@ -839,6 +863,9 @@ export default function GeneratePage() {
         useAiParsing?: boolean
         producerMoves?: string[]
         arrangementPlan?: ArrangementPlanResponse['plan']
+        referenceAnalysisId?: string
+        adaptationStrength?: AdaptationStrength
+        guidanceMode?: GuidanceMode
       } = {}
       
       if (arrangementType === 'bars') {
@@ -893,6 +920,13 @@ export default function GeneratePage() {
 
       options.variationCount = 3
       options.autoSave = false
+
+      // Include reference guidance parameters when a reference has been analyzed
+      if (referenceAnalysisId) {
+        options.referenceAnalysisId = referenceAnalysisId
+        options.adaptationStrength = adaptationStrength
+        options.guidanceMode = guidanceMode
+      }
 
       // AI plan preview (best-effort). Do not block render enqueue if planning fails.
       try {
@@ -1366,6 +1400,23 @@ export default function GeneratePage() {
               <ProducerMoves
                 selectedMoves={selectedMoves}
                 onChange={setSelectedMoves}
+                disabled={isGenerating}
+              />
+
+              {/* Reference Track (optional) */}
+              <ReferenceTrackPanel
+                adaptationStrength={adaptationStrength}
+                guidanceMode={guidanceMode}
+                onAdaptationStrengthChange={setAdaptationStrength}
+                onGuidanceModeChange={setGuidanceMode}
+                onAnalysisComplete={(id, refSummary) => {
+                  setReferenceAnalysisId(id)
+                  setReferenceSummary(refSummary)
+                }}
+                onAnalysisCleared={() => {
+                  setReferenceAnalysisId(null)
+                  setReferenceSummary(undefined)
+                }}
                 disabled={isGenerating}
               />
 
@@ -1942,6 +1993,17 @@ export default function GeneratePage() {
                 </div>
               )}
 
+              {/* Reference Guidance Panel – only shown when reference was used */}
+              {(arrangementStatus.status === 'done' || arrangementStatus.status === 'completed') && activeReferenceAnalysisId && (
+                <ReferenceGuidancePanel
+                  summary={activeReferenceSummary ?? null}
+                  adaptationStrength={activeAdaptationStrength}
+                  guidanceMode={activeGuidanceMode}
+                  referenceStructureSummary={referenceStructureSummary}
+                  producerNotes={producerNotes}
+                />
+              )}
+
               {/* Producer Engine V2 Insights */}
               {(arrangementStatus.status === 'done' || arrangementStatus.status === 'completed') && (
                 <div className="bg-gray-900/50 border border-gray-800 rounded-lg p-6">
@@ -1974,6 +2036,9 @@ export default function GeneratePage() {
                     setError(null)
                     setAudioUnavailable(false)
                     audioDownloadAttemptsRef.current = 0
+                    setActiveReferenceAnalysisId(null)
+                    setActiveReferenceSummary(undefined)
+                    setReferenceStructureSummary(null)
                     if (audioUrl) {
                       URL.revokeObjectURL(audioUrl)
                       setAudioUrl(null)
