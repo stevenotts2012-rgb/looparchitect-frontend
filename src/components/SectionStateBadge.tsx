@@ -26,6 +26,8 @@
  * not need to repeat the priority logic.
  */
 
+import React from 'react'
+
 export type SectionState =
   | 'processing'
   | 'rendering_preview'
@@ -174,8 +176,6 @@ function getConfig(state: SectionState): BadgeConfig {
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
-
-import React from 'react'
 
 export function SectionStateBadge({ state, className = '' }: SectionStateBadgeProps) {
   const { label, wrapperClass, icon } = getConfig(state)
