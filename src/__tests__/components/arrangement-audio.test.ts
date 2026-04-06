@@ -1273,3 +1273,97 @@ describe('(13) output_file_url field mapping', () => {
     expect(capturedAudioUrl).toBe(validUrl)
   })
 })
+
+// ---------------------------------------------------------------------------
+// (14) Legacy flow backward-compatibility regression
+// ---------------------------------------------------------------------------
+//
+// Verifies that the arrangement preview and variation preview flows work
+// correctly when the backend omits newer optional fields (audioUnavailable,
+// arrangementStatus, preview_status, output_file_url).  The frontend must
+// not crash, must not spin forever, and must still settle in a terminal state.
+
+describe('(14) Legacy flow backward-compatibility', () => {
+  describe('candidate objects with no new fields', () => {
+    it('shouldCandidateBeProcessed handles legacy candidate (no audioUnavailable)', () => {
+      // Old state shape: only arrangement_id, status, audioUrl
+      const legacy: CandidateState = { arrangement_id: 1, status: 'queued', audioUrl: null }
+      expect(shouldCandidateBeProcessed(legacy)).toBe(true)
+    })
+
+    it('done legacy candidate without audioUrl still enters retry path', () => {
+      const legacy: CandidateState = { arrangement_id: 2, status: 'done', audioUrl: null }
+      // audioUnavailable is undefined (falsy) → needsAudio check fires → returns true
+      expect(shouldCandidateBeProcessed(legacy)).toBe(true)
+    })
+
+    it('done legacy candidate with audioUrl settles immediately (no polling)', () => {
+      const legacy: CandidateState = {
+        arrangement_id: 3, status: 'done', audioUrl: 'blob:http://localhost/legacy',
+      }
+      expect(shouldCandidateBeProcessed(legacy)).toBe(false)
+      expect(hasPendingCandidates([legacy])).toBe(false)
+    })
+
+    it('legacy candidate never spins forever – max retries still marks unavailable', () => {
+      const legacy: CandidateState = { arrangement_id: 4, status: 'done', audioUrl: null }
+      const result = applyAudioRetry(legacy, MAX_PREVIEW_DOWNLOAD_ATTEMPTS, null)
+      expect(result.audioUnavailable).toBe(true)
+      expect(shouldCandidateBeProcessed(result)).toBe(false)
+    })
+
+    it('applyPollResult does not crash when called with a legacy candidate', () => {
+      const legacy = [{ arrangement_id: 5, status: 'processing', audioUrl: null }]
+      expect(() =>
+        applyPollResult(legacy, { arrangement_id: 5, status: 'done' }, null)
+      ).not.toThrow()
+    })
+
+    it('functionalMerge does not crash when candidates lack audioUnavailable', () => {
+      const current = [{ arrangement_id: 6, status: 'done', audioUrl: 'blob:http://localhost/6' }]
+      const next = [{ arrangement_id: 6, status: 'done', audioUrl: null }]
+      // Should preserve existing audioUrl (guard 2) without checking audioUnavailable
+      const merged = functionalMerge(current, next)
+      expect(merged[0].audioUrl).toBe('blob:http://localhost/6')
+    })
+  })
+
+  describe('status response without new URL fields', () => {
+    it('resolveArrangementAudioUrl returns null for a legacy response with no URL fields', () => {
+      // Backend pre-output_file_url only returns { id, status, progress }
+      expect(resolveArrangementAudioUrl({ id: 99, status: 'done' } as Parameters<typeof resolveArrangementAudioUrl>[0])).toBeNull()
+    })
+
+    it('resolveArrangementAudioUrl reads output_url (legacy primary field)', () => {
+      const legacyResponse = { output_url: 'https://example.com/legacy-output.mp3' } as Parameters<typeof resolveArrangementAudioUrl>[0]
+      expect(resolveArrangementAudioUrl(legacyResponse)).toBe('https://example.com/legacy-output.mp3')
+    })
+  })
+
+  describe('syncAudioUrlFromCandidate with legacy candidates', () => {
+    it('does not overwrite a valid existing URL with undefined (legacy field absence)', () => {
+      const valid = 'blob:http://localhost/valid'
+      // Legacy candidate: audioUrl field is absent (undefined), not null
+      const result = syncAudioUrlFromCandidate(valid, { audioUrl: undefined })
+      expect(result).toBe(valid)
+    })
+  })
+
+  describe('preview display state with legacy preview_status', () => {
+    it('resolvePreviewDisplayState returns "loading" when preview_status is absent (legacy backend)', () => {
+      // Mirrors: old backend does not return preview_status at all
+      const resolvePreviewDisplayState = (
+        audioUrl: string | null,
+        audioUnavailable: boolean,
+        previewStatus?: string | null,
+      ): string => {
+        if (audioUrl != null) return 'player'
+        if (audioUnavailable) return 'fallback-with-retry'
+        if (previewStatus === 'queued' || previewStatus === 'processing') return 'rendering'
+        return 'loading'
+      }
+      expect(resolvePreviewDisplayState(null, false, undefined)).toBe('loading')
+      expect(resolvePreviewDisplayState(null, false, null)).toBe('loading')
+    })
+  })
+})

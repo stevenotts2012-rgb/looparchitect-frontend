@@ -45,6 +45,7 @@ import { HelpButton } from '@/components/HelpButton'
 import { ProducerInsightsPanel } from '@/components/ProducerInsightsPanel'
 import ReferenceTrackPanel, { type AdaptationStrength, type GuidanceMode } from '@/components/ReferenceTrackPanel'
 import { ReferenceGuidancePanel } from '@/components/ReferenceGuidancePanel'
+import { SectionStateBadge, deriveSectionState } from '@/components/SectionStateBadge'
 import { SimpleStyleProfile } from '@/lib/styleSchema'
 
 export default function GeneratePage() {
@@ -1748,23 +1749,7 @@ export default function GeneratePage() {
                     candidate.status === 'pending' ||
                     candidate.status === 'processing'
 
-                  const statusLabel = () => {
-                    switch (candidate.status) {
-                      case 'queued': return 'Queued'
-                      case 'pending': return 'Preparing'
-                      case 'processing': return 'Rendering...'
-                      case 'done':
-                      case 'completed': return 'Ready'
-                      case 'failed': return 'Failed'
-                      default: return candidate.status
-                    }
-                  }
-
-                  const statusChipClass = () => {
-                    if (isDone) return 'text-green-400 bg-green-900/30 border border-green-800'
-                    if (isFailed) return 'text-red-400 bg-red-900/30 border border-red-800'
-                    return 'text-yellow-300 bg-yellow-900/20 border border-yellow-800'
-                  }
+                  const badgeState = deriveSectionState(candidate)
 
                   return (
                     <div
@@ -1773,9 +1758,7 @@ export default function GeneratePage() {
                     >
                       <div className="flex items-center justify-between gap-2">
                         <p className="text-sm text-white font-medium">Variation #{candidate.arrangement_id}</p>
-                        <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${statusChipClass()}`}>
-                          {statusLabel()}
-                        </span>
+                        <SectionStateBadge state={badgeState} />
                       </div>
 
                       {isDone && candidate.audioUrl ? (
