@@ -7,7 +7,8 @@
  */
 
 import {
-  generateArrangement,
+  renderLoopAsync,
+  getJobStatus,
   getArrangementStatus,
   listArrangements,
   saveArrangement,
@@ -66,37 +67,35 @@ afterEach(() => {
 })
 
 // ===========================================================================
-// generateArrangement
+// renderLoopAsync
 // ===========================================================================
 
-describe('generateArrangement', () => {
-  const mockResponse = {
-    arrangement_id: 99,
+describe('renderLoopAsync', () => {
+  const mockRenderResponse = {
+    job_id: 'job-abc-123',
     loop_id: 1,
     status: 'queued',
-    created_at: '2024-01-01T00:00:00Z',
-    structure_preview: [{ name: 'Intro', bars: 8, energy: 0.3 }],
+    message: 'Render job enqueued',
   }
 
-  it('posts to /api/v1/arrangements/generate', async () => {
-    global.fetch = makeFetchMock(mockResponse)
-    await generateArrangement(1, { targetSeconds: 60 })
+  it('posts to /api/v1/loops/:loop_id/render-async', async () => {
+    global.fetch = makeFetchMock(mockRenderResponse)
+    await renderLoopAsync(1, { targetSeconds: 60 })
     const [[url]] = (global.fetch as jest.Mock).mock.calls
-    expect(url).toContain('/v1/arrangements/generate')
+    expect(url).toContain('/v1/loops/1/render-async')
   })
 
-  it('sends loop_id and target_seconds in the body', async () => {
-    global.fetch = makeFetchMock(mockResponse)
-    await generateArrangement(5, { targetSeconds: 120 })
+  it('sends target_seconds in the request body', async () => {
+    global.fetch = makeFetchMock(mockRenderResponse)
+    await renderLoopAsync(5, { targetSeconds: 120 })
     const [[, init]] = (global.fetch as jest.Mock).mock.calls
     const body = JSON.parse(init.body as string)
-    expect(body.loop_id).toBe(5)
     expect(body.target_seconds).toBe(120)
   })
 
   it('calculates target_seconds from bars and bpm', async () => {
-    global.fetch = makeFetchMock(mockResponse)
-    await generateArrangement(1, { bars: 32, loopBpm: 120 })
+    global.fetch = makeFetchMock(mockRenderResponse)
+    await renderLoopAsync(1, { bars: 32, loopBpm: 120 })
     const [[, init]] = (global.fetch as jest.Mock).mock.calls
     const body = JSON.parse(init.body as string)
     // 32 bars * 4 beats/bar * 60s / 120 bpm = 64s
@@ -104,16 +103,16 @@ describe('generateArrangement', () => {
   })
 
   it('uses default 180s when no duration is provided', async () => {
-    global.fetch = makeFetchMock(mockResponse)
-    await generateArrangement(1)
+    global.fetch = makeFetchMock(mockRenderResponse)
+    await renderLoopAsync(1)
     const [[, init]] = (global.fetch as jest.Mock).mock.calls
     const body = JSON.parse(init.body as string)
     expect(body.target_seconds).toBe(180)
   })
 
   it('includes optional fields when provided', async () => {
-    global.fetch = makeFetchMock(mockResponse)
-    await generateArrangement(1, {
+    global.fetch = makeFetchMock(mockRenderResponse)
+    await renderLoopAsync(1, {
       targetSeconds: 60,
       genre: 'trap',
       stylePreset: 'dark',
@@ -133,8 +132,8 @@ describe('generateArrangement', () => {
   })
 
   it('sends reference analysis fields when provided', async () => {
-    global.fetch = makeFetchMock(mockResponse)
-    await generateArrangement(1, {
+    global.fetch = makeFetchMock(mockRenderResponse)
+    await renderLoopAsync(1, {
       targetSeconds: 60,
       referenceAnalysisId: 'ref-123',
       adaptationStrength: 'close',
@@ -147,30 +146,95 @@ describe('generateArrangement', () => {
     expect(body.guidance_mode).toBe('structure_energy')
   })
 
-  it('returns the arrangement response', async () => {
-    global.fetch = makeFetchMock(mockResponse)
-    const result = await generateArrangement(1, { targetSeconds: 60 })
-    expect(result.arrangement_id).toBe(99)
+  it('returns the job_id from the response', async () => {
+    global.fetch = makeFetchMock(mockRenderResponse)
+    const result = await renderLoopAsync(1, { targetSeconds: 60 })
+    expect(result.job_id).toBe('job-abc-123')
     expect(result.loop_id).toBe(1)
   })
 
   it('throws LoopArchitectApiError on HTTP error', async () => {
     global.fetch = makeErrorFetchMock(500, { message: 'Internal server error' })
-    await expect(generateArrangement(1, { targetSeconds: 60 })).rejects.toBeInstanceOf(LoopArchitectApiError)
+    await expect(renderLoopAsync(1, { targetSeconds: 60 })).rejects.toBeInstanceOf(LoopArchitectApiError)
   })
 
   it('wraps network errors in LoopArchitectApiError', async () => {
     global.fetch = jest.fn().mockRejectedValue(new TypeError('Network failure'))
-    await expect(generateArrangement(1)).rejects.toBeInstanceOf(LoopArchitectApiError)
+    await expect(renderLoopAsync(1)).rejects.toBeInstanceOf(LoopArchitectApiError)
   })
 
   it('enforces minimum 10s when bars calculation underflows', async () => {
-    global.fetch = makeFetchMock(mockResponse)
+    global.fetch = makeFetchMock(mockRenderResponse)
     // 1 bar * 4 * 60 / 240 bpm = 1s, which is below the minimum of 10
-    await generateArrangement(1, { bars: 1, loopBpm: 240 })
+    await renderLoopAsync(1, { bars: 1, loopBpm: 240 })
     const [[, init]] = (global.fetch as jest.Mock).mock.calls
     const body = JSON.parse(init.body as string)
     expect(body.target_seconds).toBeGreaterThanOrEqual(10)
+  })
+})
+
+// ===========================================================================
+// getJobStatus
+// ===========================================================================
+
+describe('getJobStatus', () => {
+  const mockJobQueued = {
+    job_id: 'job-abc-123',
+    status: 'queued',
+  }
+
+  const mockJobFinished = {
+    job_id: 'job-abc-123',
+    status: 'finished',
+    arrangement_id: 99,
+    audio_url: 'https://cdn.example.com/audio.wav',
+    structure_preview: [{ name: 'Intro', bars: 8, energy: 0.3 }],
+  }
+
+  it('fetches /api/v1/jobs/:job_id', async () => {
+    global.fetch = makeFetchMock(mockJobQueued)
+    await getJobStatus('job-abc-123')
+    const [[url]] = (global.fetch as jest.Mock).mock.calls
+    expect(url).toContain('/v1/jobs/job-abc-123')
+  })
+
+  it('uses GET method', async () => {
+    global.fetch = makeFetchMock(mockJobQueued)
+    await getJobStatus('job-abc-123')
+    const [[, init]] = (global.fetch as jest.Mock).mock.calls
+    expect(init.method).toBe('GET')
+  })
+
+  it('sends cache-busting headers', async () => {
+    global.fetch = makeFetchMock(mockJobQueued)
+    await getJobStatus('job-abc-123')
+    const [[, init]] = (global.fetch as jest.Mock).mock.calls
+    expect((init.headers as Record<string, string>)['Cache-Control']).toMatch(/no-cache/)
+  })
+
+  it('returns queued status', async () => {
+    global.fetch = makeFetchMock(mockJobQueued)
+    const result = await getJobStatus('job-abc-123')
+    expect(result.job_id).toBe('job-abc-123')
+    expect(result.status).toBe('queued')
+  })
+
+  it('returns finished status with arrangement_id and audio_url', async () => {
+    global.fetch = makeFetchMock(mockJobFinished)
+    const result = await getJobStatus('job-abc-123')
+    expect(result.status).toBe('finished')
+    expect(result.arrangement_id).toBe(99)
+    expect(result.audio_url).toBe('https://cdn.example.com/audio.wav')
+  })
+
+  it('throws LoopArchitectApiError on HTTP error', async () => {
+    global.fetch = makeErrorFetchMock(500, { message: 'Internal server error' })
+    await expect(getJobStatus('job-abc-123')).rejects.toBeInstanceOf(LoopArchitectApiError)
+  })
+
+  it('wraps network errors in LoopArchitectApiError', async () => {
+    global.fetch = jest.fn().mockRejectedValue(new TypeError('Network failure'))
+    await expect(getJobStatus('job-abc-123')).rejects.toBeInstanceOf(LoopArchitectApiError)
   })
 })
 
