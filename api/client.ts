@@ -1178,5 +1178,152 @@ export async function analyzeReferenceTrack(
   }
 }
 
+// ============================================================================
+// Async Render Pipeline
+// ============================================================================
+
+/**
+ * Response from POST /v1/loops/{loop_id}/render-async
+ */
+export interface RenderAsyncResponse {
+  job_id: string;
+  loop_id?: number;
+  status?: string;
+  message?: string;
+}
+
+/**
+ * Response from GET /v1/jobs/{job_id}
+ */
+export interface JobStatusResponse {
+  job_id: string;
+  status: 'queued' | 'pending' | 'processing' | 'finished' | 'failed';
+  render_plan_json?: Record<string, unknown> | null;
+  audio_url?: string | null;
+  preview_url?: string | null;
+  arrangement_id?: number | null;
+  candidates?: ArrangementPreviewCandidate[] | null;
+  error_message?: string | null;
+  created_at?: string;
+  updated_at?: string;
+  seed_used?: number;
+  structure_preview?: Array<{ name: string; bars: number; energy: number }>;
+}
+
+/**
+ * Trigger an async render job for a loop.
+ * Replaces the old POST /v1/arrangements/generate endpoint.
+ * Returns immediately with a job_id that can be polled via getJobStatus().
+ */
+export async function renderLoopAsync(
+  loopId: number,
+  options?: {
+    targetSeconds?: number;
+    duration?: number;
+    bars?: number;
+    loopBpm?: number;
+    genre?: string;
+    intensity?: string;
+    includeStems?: boolean;
+    stylePreset?: string;
+    styleParams?: Record<string, number | string>;
+    seed?: number | string;
+    variationCount?: number;
+    autoSave?: boolean;
+    styleTextInput?: string;
+    useAiParsing?: boolean;
+    producerMoves?: string[];
+    arrangementPlan?: ArrangementPlanResponse['plan'];
+    referenceAnalysisId?: string;
+    adaptationStrength?: string;
+    guidanceMode?: string;
+  }
+): Promise<RenderAsyncResponse> {
+  try {
+    const correlationId = generateCorrelationId();
+
+    let targetSeconds = options?.targetSeconds || options?.duration;
+    if (!targetSeconds && options?.bars) {
+      const bpm = options.loopBpm && options.loopBpm > 0 ? options.loopBpm : 120;
+      targetSeconds = Math.max(10, Math.round((options.bars * 4 * 60) / bpm));
+    }
+    if (!targetSeconds) {
+      targetSeconds = 180;
+    }
+
+    const requestBody: Record<string, unknown> = {
+      target_seconds: targetSeconds,
+    };
+
+    if (options?.genre) requestBody.genre = options.genre;
+    if (options?.intensity) requestBody.intensity = options.intensity;
+    if (options?.includeStems !== undefined) requestBody.include_stems = options.includeStems;
+    if (options?.stylePreset) requestBody.style_preset = options.stylePreset;
+    if (options?.styleParams) requestBody.style_params = options.styleParams;
+    if (options?.seed !== undefined) requestBody.seed = options.seed;
+    if (options?.variationCount !== undefined) requestBody.variation_count = options.variationCount;
+    if (options?.autoSave !== undefined) requestBody.auto_save = options.autoSave;
+    if (options?.styleTextInput) requestBody.style_text_input = options.styleTextInput;
+    if (options?.useAiParsing !== undefined) requestBody.use_ai_parsing = options.useAiParsing;
+    if (options?.producerMoves) requestBody.producer_moves = options.producerMoves;
+    if (options?.arrangementPlan) requestBody.arrangement_plan = options.arrangementPlan;
+    if (options?.referenceAnalysisId) requestBody.reference_analysis_id = options.referenceAnalysisId;
+    if (options?.adaptationStrength) requestBody.adaptation_strength = options.adaptationStrength;
+    if (options?.guidanceMode) requestBody.guidance_mode = options.guidanceMode;
+
+    const response = await fetch(apiUrl(`/v1/loops/${loopId}/render-async`), {
+      method: 'POST',
+      headers: createJsonHeaders(correlationId),
+      body: JSON.stringify(requestBody),
+    });
+
+    const payload = await handleResponse<RenderAsyncResponse>(response);
+    console.info('feature_event', {
+      event: 'render_async_dispatched',
+      correlation_id: correlationId,
+      loop_id: loopId,
+      job_id: payload.job_id,
+    });
+    return payload;
+  } catch (error) {
+    if (error instanceof LoopArchitectApiError) {
+      throw error;
+    }
+    throw new LoopArchitectApiError(
+      `Failed to start async render: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      500
+    );
+  }
+}
+
+/**
+ * Get the current status of an async render job.
+ * Poll this until status === 'finished' or 'failed'.
+ */
+export async function getJobStatus(jobId: string): Promise<JobStatusResponse> {
+  try {
+    const correlationId = generateCorrelationId();
+    const response = await fetch(apiUrl(`/v1/jobs/${jobId}`), {
+      method: 'GET',
+      headers: {
+        ...createJsonHeaders(correlationId),
+        'Cache-Control': 'no-cache, no-store, max-age=0',
+        Pragma: 'no-cache',
+      },
+      cache: 'no-store',
+    });
+
+    return handleResponse<JobStatusResponse>(response);
+  } catch (error) {
+    if (error instanceof LoopArchitectApiError) {
+      throw error;
+    }
+    throw new LoopArchitectApiError(
+      `Failed to get job status: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      500
+    );
+  }
+}
+
 // Export error class for external use
 export { LoopArchitectApiError };

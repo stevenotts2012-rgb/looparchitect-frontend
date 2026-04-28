@@ -3,7 +3,8 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import Link from 'next/link'
 import {
-  generateArrangement,
+  renderLoopAsync,
+  getJobStatus,
   saveArrangement,
   getArrangementPlan,
   getArrangementStatus,
@@ -132,8 +133,12 @@ export default function GeneratePage() {
     confidence: 0.8,
   })
 
+  const [currentJobId, setCurrentJobId] = useState<string | null>(null)
+
   const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null)
   const pollingErrorCountRef = useRef<number>(0)
+  const jobPollingIntervalRef = useRef<NodeJS.Timeout | null>(null)
+  const jobPollingErrorCountRef = useRef<number>(0)
   const audioUrlRef = useRef<string | null>(null)
   const loopAudioUrlRef = useRef<string | null>(null)
   // Tracks current candidates for use in cleanup (avoids stale closure in unmount effect)
@@ -571,6 +576,109 @@ export default function GeneratePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loadHistory, previewCandidates.length])
 
+  // Poll async render job status.
+  // Starts when currentJobId is set (by handleGenerate). Runs until the job
+  // reaches a terminal state ('finished' or 'failed'), then clears itself and
+  // sets isGenerating = false so the Generate button re-enables.
+  useEffect(() => {
+    if (!currentJobId) return
+
+    jobPollingErrorCountRef.current = 0
+    let isPolling = false
+
+    const pollJob = async () => {
+      // Prevent concurrent polls when a previous tick is still in-flight.
+      if (isPolling) return
+      isPolling = true
+      try {
+        const job = await getJobStatus(currentJobId)
+        console.log('job_status_update', { job_id: currentJobId, status: job.status })
+
+        if (job.status === 'finished') {
+          if (jobPollingIntervalRef.current) {
+            clearInterval(jobPollingIntervalRef.current)
+            jobPollingIntervalRef.current = null
+          }
+          setCurrentJobId(null)
+
+          // Resolve a playable audio URL from the finished job
+          const jobAudioUrl = job.audio_url || job.preview_url || null
+          if (jobAudioUrl) {
+            setAudioUrl(jobAudioUrl)
+          }
+
+          // Build candidate list from job response, falling back to a single
+          // entry constructed from arrangement_id when no candidates array is
+          // returned.
+          const rawCandidates = (job.candidates && job.candidates.length > 0)
+            ? job.candidates
+            : (job.arrangement_id
+              ? [{
+                  arrangement_id: job.arrangement_id,
+                  status: 'done' as const,
+                  created_at: job.updated_at || new Date().toISOString(),
+                  render_job_id: job.job_id,
+                  seed_used: job.seed_used,
+                }]
+              : [])
+
+          if (rawCandidates.length > 0) {
+            const enriched = rawCandidates.map((c) => ({
+              ...c,
+              audioUrl: jobAudioUrl ?? null,
+            }))
+            setPreviewCandidates(enriched)
+            setSelectedPreviewId(rawCandidates[0].arrangement_id)
+            setArrangementId(rawCandidates[0].arrangement_id)
+          }
+
+          if (job.structure_preview) {
+            setStructurePreview(job.structure_preview)
+          }
+
+          const loopIdNum = loopId ? parseInt(loopId, 10) : undefined
+          await loadHistory(loopIdNum && !Number.isNaN(loopIdNum) ? loopIdNum : undefined)
+          setIsGenerating(false)
+        } else if (job.status === 'failed') {
+          if (jobPollingIntervalRef.current) {
+            clearInterval(jobPollingIntervalRef.current)
+            jobPollingIntervalRef.current = null
+          }
+          setCurrentJobId(null)
+          setError(job.error_message || 'Render job failed. Please try again.')
+          setIsGenerating(false)
+        }
+      } catch (err) {
+        jobPollingErrorCountRef.current += 1
+        console.error('Error polling job status:', err)
+        if (jobPollingErrorCountRef.current >= 5) {
+          if (jobPollingIntervalRef.current) {
+            clearInterval(jobPollingIntervalRef.current)
+            jobPollingIntervalRef.current = null
+          }
+          setCurrentJobId(null)
+          setError('Connection issue while checking render status. Please try again.')
+          setIsGenerating(false)
+        }
+      } finally {
+        isPolling = false
+      }
+    }
+
+    jobPollingIntervalRef.current = setInterval(pollJob, 3000)
+    // Fire an initial poll immediately so the first status check doesn't wait
+    // a full 3 s – but only after the interval is registered to avoid the
+    // concurrent-poll race condition (isPolling guards any overlap).
+    pollJob()
+
+    return () => {
+      if (jobPollingIntervalRef.current) {
+        clearInterval(jobPollingIntervalRef.current)
+        jobPollingIntervalRef.current = null
+      }
+    }
+  }, [currentJobId, loadHistory, loopId])
+
   // Sync selectedPreviewId → main arrangement state.
   //
   // DEFENSIVE FIX: When `previewCandidates` updates (e.g. after a poll tick) but
@@ -845,6 +953,10 @@ export default function GeneratePage() {
       setLoopAudioUrl(null)
     }
 
+    // Tracks whether a job_id was successfully dispatched so the finally block
+    // knows not to clear isGenerating (the job-polling useEffect does that).
+    let jobDispatched = false
+
     try {
       // Pre-check loop source availability so users don't queue doomed jobs
       await validateLoopSource(loopIdNum)
@@ -972,25 +1084,14 @@ export default function GeneratePage() {
         }
       }
 
-      const response = await generateArrangement(loopIdNum, options)
-      const candidates = (response.candidates && response.candidates.length > 0)
-        ? response.candidates
-        : (response.arrangement_id
-          ? [{
-              arrangement_id: response.arrangement_id,
-              status: (response.status || 'queued') as ArrangementPreviewCandidate['status'],
-              created_at: response.created_at || new Date().toISOString(),
-              render_job_id: response.render_job_ids?.[0],
-              seed_used: response.seed_used,
-            }]
-          : [])
+      // Dispatch async render job – the job-polling useEffect takes over from here.
+      console.log('render_async_called')
+      const renderResponse = await renderLoopAsync(loopIdNum, options)
+      console.log('job_id_received', renderResponse.job_id)
+      setCurrentJobId(renderResponse.job_id)
+      jobDispatched = true
 
-      setPreviewCandidates(candidates)
-      if (candidates.length > 0) {
-        setSelectedPreviewId(candidates[0].arrangement_id)
-        setArrangementId(candidates[0].arrangement_id)
-      }
-      setStructurePreview(response.structure_preview || [])
+      // Optimistic history refresh so the row appears immediately.
       await loadHistory(loopIdNum)
     } catch (err) {
       if (err instanceof LoopArchitectApiError) {
@@ -1004,7 +1105,12 @@ export default function GeneratePage() {
         setError('Failed to generate arrangement. Please try again.')
       }
     } finally {
-      setIsGenerating(false)
+      // Only stop the generating spinner when no job has been dispatched.
+      // When a job_id has been received, the job-polling useEffect clears
+      // isGenerating once the job reaches a terminal state ('finished'/'failed').
+      if (!jobDispatched) {
+        setIsGenerating(false)
+      }
     }
   }
 
