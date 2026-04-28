@@ -139,18 +139,6 @@ export interface ArrangementPreviewCandidate {
   seed_used?: number;
 }
 
-export interface GenerateArrangementResponse {
-  arrangement_id?: number;
-  loop_id: number;
-  status?: string;
-  created_at?: string;
-  render_job_ids?: string[];
-  seed_used?: number;
-  style_preset?: string;
-  style_profile?: Record<string, unknown>;
-  structure_preview?: Array<{ name: string; bars: number; energy: number }>;
-  candidates?: ArrangementPreviewCandidate[];
-}
 
 export interface StylePresetResponse {
   id: string;
@@ -277,115 +265,6 @@ async function handleResponse<T>(response: Response): Promise<T> {
 // ============================================================================
 // API Functions
 // ============================================================================
-
-/**
- * Generate a new arrangement from a loop
- * @param loopId - The ID of the loop to generate an arrangement from
- * @param options - Parameters including targetSeconds (required) and other options
- * @returns Promise with the generated arrangement details
- */
-export async function generateArrangement(
-  loopId: number,
-  options?: {
-    targetSeconds?: number;
-    duration?: number;
-    bars?: number;
-    loopBpm?: number;
-    genre?: string;
-    intensity?: string;
-    includeStems?: boolean;
-    stylePreset?: string;
-    styleParams?: Record<string, number | string>;
-    seed?: number | string;
-    variationCount?: number;
-    autoSave?: boolean;
-    styleTextInput?: string;
-    useAiParsing?: boolean;
-    producerMoves?: string[];
-    arrangementPlan?: ArrangementPlanResponse['plan'];
-    /** ID returned by analyzeReferenceTrack; omit when no reference is used. */
-    referenceAnalysisId?: string;
-    /** How closely to follow the reference structure/energy. Default: 'medium'. */
-    adaptationStrength?: 'loose' | 'medium' | 'close';
-    /** Which aspects of the reference to use as guidance. Default: 'structure_energy'. */
-    guidanceMode?: 'structure' | 'energy' | 'structure_energy';
-  }
-): Promise<GenerateArrangementResponse> {
-  try {
-    const correlationId = generateCorrelationId();
-    // Resolve target duration with priority: targetSeconds > duration > bars(+bpm) > default
-    let targetSeconds = options?.targetSeconds || options?.duration;
-    if (!targetSeconds && options?.bars) {
-      const bpm = options.loopBpm && options.loopBpm > 0 ? options.loopBpm : 120;
-      targetSeconds = Math.max(10, Math.round((options.bars * 4 * 60) / bpm));
-    }
-    if (!targetSeconds) {
-      targetSeconds = 180;
-    }
-    
-    const requestBody: {
-      loop_id: number;
-      target_seconds: number;
-      genre?: string;
-      intensity?: string;
-      include_stems?: boolean;
-      style_preset?: string;
-      style_params?: Record<string, number | string>;
-      seed?: number | string;
-      variation_count?: number;
-      auto_save?: boolean;
-      style_text_input?: string;
-      use_ai_parsing?: boolean;
-      producer_moves?: string[];
-      arrangement_plan?: ArrangementPlanResponse['plan'];
-      reference_analysis_id?: string;
-      adaptation_strength?: string;
-      guidance_mode?: string;
-    } = {
-      loop_id: loopId,
-      target_seconds: targetSeconds,
-    };
-    
-    if (options?.genre) requestBody.genre = options.genre;
-    if (options?.intensity) requestBody.intensity = options.intensity;
-    if (options?.includeStems !== undefined) requestBody.include_stems = options.includeStems;
-    if (options?.stylePreset) requestBody.style_preset = options.stylePreset;
-    if (options?.styleParams) requestBody.style_params = options.styleParams;
-    if (options?.seed !== undefined) requestBody.seed = options.seed;
-    if (options?.variationCount !== undefined) requestBody.variation_count = options.variationCount;
-    if (options?.autoSave !== undefined) requestBody.auto_save = options.autoSave;
-    if (options?.styleTextInput) requestBody.style_text_input = options.styleTextInput;
-    if (options?.useAiParsing !== undefined) requestBody.use_ai_parsing = options.useAiParsing;
-    if (options?.producerMoves) requestBody.producer_moves = options.producerMoves;
-    if (options?.arrangementPlan) requestBody.arrangement_plan = options.arrangementPlan;
-    if (options?.referenceAnalysisId) requestBody.reference_analysis_id = options.referenceAnalysisId;
-    if (options?.adaptationStrength) requestBody.adaptation_strength = options.adaptationStrength;
-    if (options?.guidanceMode) requestBody.guidance_mode = options.guidanceMode;
-
-    const response = await fetch(apiUrl('/v1/arrangements/generate'), {
-      method: 'POST',
-      headers: createJsonHeaders(correlationId),
-      body: JSON.stringify(requestBody),
-    });
-
-    const payload = await handleResponse<GenerateArrangementResponse>(response);
-    console.info('feature_event', {
-      event: 'arrangement_created',
-      correlation_id: correlationId,
-      arrangement_id: payload.arrangement_id,
-      sections_count: payload.structure_preview?.length || 0,
-    });
-    return payload;
-  } catch (error) {
-    if (error instanceof LoopArchitectApiError) {
-      throw error;
-    }
-    throw new LoopArchitectApiError(
-      `Failed to generate arrangement: ${error instanceof Error ? error.message : 'Unknown error'}`,
-      500
-    );
-  }
-}
 
 export async function saveArrangement(arrangementId: number): Promise<Arrangement> {
   try {
@@ -1145,7 +1024,7 @@ export async function fetchLoopPlayUrl(loopId: number): Promise<string> {
 
 /**
  * Analyze a reference audio file to extract structural and energy guidance.
- * The returned reference_analysis_id can be passed to generateArrangement
+ * The returned reference_analysis_id can be passed to renderLoopAsync
  * to guide the arrangement output.
  *
  * The file is sent directly to the backend (bypassing the Vercel proxy) to
