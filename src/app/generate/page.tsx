@@ -601,6 +601,8 @@ export default function GeneratePage() {
           }
           setCurrentJobId(null)
 
+          console.log('render_job_completed', { job_id: currentJobId, status: job.status, arrangement_id: job.arrangement_id ?? null })
+
           // Resolve a playable audio URL from the finished job
           const jobAudioUrl = job.audio_url || job.preview_url || null
           if (jobAudioUrl) {
@@ -610,7 +612,7 @@ export default function GeneratePage() {
           // Build candidate list from job response, falling back to a single
           // entry constructed from arrangement_id when no candidates array is
           // returned.
-          const rawCandidates = (job.candidates && job.candidates.length > 0)
+          let rawCandidates: ArrangementPreviewCandidate[] = (job.candidates && job.candidates.length > 0)
             ? job.candidates
             : (job.arrangement_id
               ? [{
@@ -622,6 +624,33 @@ export default function GeneratePage() {
                 }]
               : [])
 
+          // Fallback: when the job response carries neither candidates nor
+          // arrangement_id, fetch the latest completed arrangements for this
+          // loop so the results view can be populated.
+          if (rawCandidates.length === 0 && loopId) {
+            const loopIdFallback = parseInt(loopId, 10)
+            if (!Number.isNaN(loopIdFallback) && loopIdFallback > 0) {
+              try {
+                const arrangements = await listArrangements({ loopId: loopIdFallback, limit: 10 })
+                const completed = arrangements.filter(
+                  (a) => a.status === 'done' || a.status === 'completed'
+                )
+                if (completed.length > 0) {
+                  // listArrangements returns newest first; take the most recent.
+                  const latest = completed[0]
+                  rawCandidates = [{
+                    arrangement_id: latest.id,
+                    status: latest.status,
+                    created_at: latest.created_at,
+                  }]
+                  console.log('arrangements_refetched', { loop_id: loopIdFallback, arrangement_id: latest.id, total_completed: completed.length })
+                }
+              } catch (fetchErr) {
+                console.warn('render_job_completed – fallback arrangements fetch failed:', fetchErr)
+              }
+            }
+          }
+
           if (rawCandidates.length > 0) {
             const enriched = rawCandidates.map((c) => ({
               ...c,
@@ -630,6 +659,7 @@ export default function GeneratePage() {
             setPreviewCandidates(enriched)
             setSelectedPreviewId(rawCandidates[0].arrangement_id)
             setArrangementId(rawCandidates[0].arrangement_id)
+            console.log('generated_results_displayed', { arrangement_id: rawCandidates[0].arrangement_id, candidate_count: rawCandidates.length })
           }
 
           if (job.structure_preview) {
@@ -1087,9 +1117,9 @@ export default function GeneratePage() {
       }
 
       // Dispatch async render job – the job-polling useEffect takes over from here.
-      console.log('render_async_called')
+      console.log('render_async_started', { loop_id: loopIdNum })
       const renderResponse = await renderLoopAsync(loopIdNum, options)
-      console.log('job_id_received', renderResponse.job_id)
+      console.log('job_id_received', { job_id: renderResponse.job_id, loop_id: loopIdNum })
       setCurrentJobId(renderResponse.job_id)
       jobDispatched = true
 
