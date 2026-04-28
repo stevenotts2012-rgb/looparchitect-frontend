@@ -673,7 +673,7 @@ export default function GeneratePage() {
             setArrangementId(rawCandidates[0].arrangement_id)
             console.log('generated_results_displayed', { arrangement_id: rawCandidates[0].arrangement_id, candidate_count: rawCandidates.length })
           } else {
-            setError('Render completed but no arrangement record was returned.')
+            setError('Render completed but no arrangement record was returned. This may indicate a temporary sync issue — please try generating again.')
           }
 
           if (job.structure_preview) {
