@@ -594,7 +594,7 @@ export default function GeneratePage() {
         const job = await getJobStatus(currentJobId)
         console.log('job_status_update', { job_id: currentJobId, status: job.status })
 
-        if (job.status === 'finished') {
+        if (job.status === 'finished' || job.status === 'completed') {
           if (jobPollingIntervalRef.current) {
             clearInterval(jobPollingIntervalRef.current)
             jobPollingIntervalRef.current = null
@@ -911,6 +911,8 @@ export default function GeneratePage() {
   }
 
   const handleGenerate = async () => {
+    if (isGenerating) return
+
     if (!loopId) {
       setError('Please enter a Loop ID')
       return
