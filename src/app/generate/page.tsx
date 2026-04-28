@@ -601,7 +601,14 @@ export default function GeneratePage() {
           }
           setCurrentJobId(null)
 
+          console.log("JOB_DONE_RESPONSE", job)
           console.log('render_job_completed', { job_id: currentJobId, status: job.status, arrangement_id: job.arrangement_id ?? null })
+
+          // Clear AI plan preview state immediately so the form/AI-plan section
+          // disappears and the generated results can take over the UI.
+          setAiPlanDraft(null)
+          setAiPlanMeta(null)
+          setAiPlanValidation(null)
 
           // Resolve a playable audio URL from the finished job
           const jobAudioUrl = job.audio_url || job.preview_url || null
@@ -624,30 +631,33 @@ export default function GeneratePage() {
                 }]
               : [])
 
-          // Fallback: when the job response carries neither candidates nor
-          // arrangement_id, fetch the latest completed arrangements for this
-          // loop so the results view can be populated.
-          if (rawCandidates.length === 0 && loopId) {
+          // Always fetch the latest arrangements for this loop so we can show
+          // results even when the job response carries no candidates / arrangement_id.
+          // Also used to confirm the result when candidates ARE provided.
+          if (loopId) {
             const parsedLoopId = parseInt(loopId, 10)
             const MAX_ARRANGEMENTS_TO_FETCH = 10
             if (!Number.isNaN(parsedLoopId) && parsedLoopId > 0) {
               try {
                 const arrangements = await listArrangements({ loopId: parsedLoopId, limit: MAX_ARRANGEMENTS_TO_FETCH })
-                const completed = arrangements.filter(
-                  (a) => a.status === 'done' || a.status === 'completed'
-                )
-                if (completed.length > 0) {
-                  // listArrangements returns newest first; take the most recent.
-                  const latest = completed[0]
+                console.log("ARRANGEMENTS_RESPONSE", arrangements)
+
+                if (rawCandidates.length === 0 && arrangements.length > 0) {
+                  // Pick the arrangement with the highest id (most recently created)
+                  // regardless of its render status so the UI transitions away from
+                  // the AI Preview Plan view even when the arrangement is still processing.
+                  const sorted = [...arrangements].sort((a, b) => b.id - a.id)
+                  const latestArrangement = sorted[0]
+                  console.log("SETTING_GENERATED_RESULTS", latestArrangement)
                   rawCandidates = [{
-                    arrangement_id: latest.id,
-                    status: latest.status,
-                    created_at: latest.created_at,
+                    arrangement_id: latestArrangement.id,
+                    status: latestArrangement.status,
+                    created_at: latestArrangement.created_at,
                   }]
-                  console.log('arrangements_refetched', { loop_id: parsedLoopId, arrangement_id: latest.id, total_completed: completed.length })
+                  console.log('arrangements_refetched', { loop_id: parsedLoopId, arrangement_id: latestArrangement.id, total: arrangements.length })
                 }
               } catch (fetchErr) {
-                console.warn('render_job_completed – fallback arrangements fetch failed:', fetchErr)
+                console.warn('render_job_completed – arrangements fetch failed:', fetchErr)
               }
             }
           }
@@ -1260,6 +1270,19 @@ export default function GeneratePage() {
               Create a professional arrangement from your uploaded loop
             </p>
           </div>
+
+          {/* Temporary debug block – TODO: remove after confirming state fixes (tracked in problem statement task 9) */}
+          {process.env.NODE_ENV !== 'production' && (
+            <div className="bg-yellow-900/30 border border-yellow-700 rounded-lg p-4 text-xs font-mono space-y-1">
+              <p className="text-yellow-300 font-bold">DEBUG (dev only)</p>
+              <p className="text-yellow-200">jobStatus: {currentJobId ? `polling (${currentJobId})` : isGenerating ? 'generating' : 'idle'}</p>
+              <p className="text-yellow-200">arrangementCount: {previewCandidates.length}</p>
+              <p className="text-yellow-200">selectedArrangementId: {selectedPreviewId ?? 'null'}</p>
+              <p className="text-yellow-200">isGenerating: {String(isGenerating)}</p>
+              <p className="text-yellow-200">arrangementId: {arrangementId ?? 'null'}</p>
+              <p className="text-yellow-200">aiPlanDraft: {aiPlanDraft ? `${aiPlanDraft.length} sections` : 'null'}</p>
+            </div>
+          )}
 
           {/* Generation Form */}
           {!arrangementId && (
