@@ -628,10 +628,11 @@ export default function GeneratePage() {
           // arrangement_id, fetch the latest completed arrangements for this
           // loop so the results view can be populated.
           if (rawCandidates.length === 0 && loopId) {
-            const loopIdFallback = parseInt(loopId, 10)
-            if (!Number.isNaN(loopIdFallback) && loopIdFallback > 0) {
+            const parsedLoopId = parseInt(loopId, 10)
+            const MAX_ARRANGEMENTS_TO_FETCH = 10
+            if (!Number.isNaN(parsedLoopId) && parsedLoopId > 0) {
               try {
-                const arrangements = await listArrangements({ loopId: loopIdFallback, limit: 10 })
+                const arrangements = await listArrangements({ loopId: parsedLoopId, limit: MAX_ARRANGEMENTS_TO_FETCH })
                 const completed = arrangements.filter(
                   (a) => a.status === 'done' || a.status === 'completed'
                 )
@@ -643,7 +644,7 @@ export default function GeneratePage() {
                     status: latest.status,
                     created_at: latest.created_at,
                   }]
-                  console.log('arrangements_refetched', { loop_id: loopIdFallback, arrangement_id: latest.id, total_completed: completed.length })
+                  console.log('arrangements_refetched', { loop_id: parsedLoopId, arrangement_id: latest.id, total_completed: completed.length })
                 }
               } catch (fetchErr) {
                 console.warn('render_job_completed – fallback arrangements fetch failed:', fetchErr)
