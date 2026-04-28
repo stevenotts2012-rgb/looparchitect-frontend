@@ -584,8 +584,12 @@ export default function GeneratePage() {
     if (!currentJobId) return
 
     jobPollingErrorCountRef.current = 0
+    let isPolling = false
 
     const pollJob = async () => {
+      // Prevent concurrent polls when a previous tick is still in-flight.
+      if (isPolling) return
+      isPolling = true
       try {
         const job = await getJobStatus(currentJobId)
         console.log('job_status_update', { job_id: currentJobId, status: job.status })
@@ -656,11 +660,16 @@ export default function GeneratePage() {
           setError('Connection issue while checking render status. Please try again.')
           setIsGenerating(false)
         }
+      } finally {
+        isPolling = false
       }
     }
 
-    pollJob()
     jobPollingIntervalRef.current = setInterval(pollJob, 3000)
+    // Fire an initial poll immediately so the first status check doesn't wait
+    // a full 3 s – but only after the interval is registered to avoid the
+    // concurrent-poll race condition (isPolling guards any overlap).
+    pollJob()
 
     return () => {
       if (jobPollingIntervalRef.current) {
