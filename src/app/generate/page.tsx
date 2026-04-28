@@ -592,9 +592,10 @@ export default function GeneratePage() {
       isPolling = true
       try {
         const job = await getJobStatus(currentJobId)
+        console.log('JOB_POLL_RESPONSE', job)
         console.log('job_status_update', { job_id: currentJobId, status: job.status })
 
-        if (job.status === 'finished' || job.status === 'completed') {
+        if (job.status === 'finished' || job.status === 'completed' || job.status === 'done') {
           if (jobPollingIntervalRef.current) {
             clearInterval(jobPollingIntervalRef.current)
             jobPollingIntervalRef.current = null
@@ -640,7 +641,7 @@ export default function GeneratePage() {
             if (!Number.isNaN(parsedLoopId) && parsedLoopId > 0) {
               try {
                 const arrangements = await listArrangements({ loopId: parsedLoopId, limit: MAX_ARRANGEMENTS_TO_FETCH })
-                console.log("ARRANGEMENTS_RESPONSE", arrangements)
+                console.log('ARRANGEMENTS_AFTER_JOB', arrangements)
 
                 if (rawCandidates.length === 0 && arrangements.length > 0) {
                   // Pick the arrangement with the highest id (most recently created)
@@ -648,7 +649,7 @@ export default function GeneratePage() {
                   // the AI Preview Plan view even when the arrangement is still processing.
                   const sorted = [...arrangements].sort((a, b) => b.id - a.id)
                   const latestArrangement = sorted[0]
-                  console.log("SETTING_GENERATED_RESULTS", latestArrangement)
+                  console.log('LATEST_ARRANGEMENT_SELECTED', latestArrangement)
                   rawCandidates = [{
                     arrangement_id: latestArrangement.id,
                     status: latestArrangement.status,
@@ -671,6 +672,8 @@ export default function GeneratePage() {
             setSelectedPreviewId(rawCandidates[0].arrangement_id)
             setArrangementId(rawCandidates[0].arrangement_id)
             console.log('generated_results_displayed', { arrangement_id: rawCandidates[0].arrangement_id, candidate_count: rawCandidates.length })
+          } else {
+            setError('Render completed but no arrangement record was returned.')
           }
 
           if (job.structure_preview) {
@@ -965,6 +968,8 @@ export default function GeneratePage() {
       return
     }
 
+    console.log('GENERATE_CLICKED', loopId)
+
     setIsGenerating(true)
     setError(null)
     setArrangementId(null)
@@ -1084,15 +1089,8 @@ export default function GeneratePage() {
         options.guidanceMode = guidanceMode
       }
 
-      // AI plan preview (best-effort). Do not block render enqueue if planning fails.
-      try {
-        await previewArrangementPlan(loopDetails, loopBpm)
-      } catch (planErr) {
-        console.warn('AI plan preview unavailable, continuing generation:', planErr)
-        setAiPlanDraft(null)
-        setAiPlanMeta(null)
-        setAiPlanValidation(null)
-      }
+      // AI plan preview is bypassed here – Generate goes straight to render-async.
+      // (The Preview AI Plan button can still be used independently.)
 
       // Use edited AI plan as deterministic arrangement input when available
       if (aiPlanDraft && aiPlanDraft.length > 0) {
@@ -1130,6 +1128,7 @@ export default function GeneratePage() {
       // Dispatch async render job – the job-polling useEffect takes over from here.
       console.log('render_async_started', { loop_id: loopIdNum })
       const renderResponse = await renderLoopAsync(loopIdNum, options)
+      console.log('RENDER_ASYNC_RESPONSE', renderResponse)
       console.log('job_id_received', { job_id: renderResponse.job_id, loop_id: loopIdNum })
       setCurrentJobId(renderResponse.job_id)
       jobDispatched = true
@@ -1275,8 +1274,10 @@ export default function GeneratePage() {
           {process.env.NODE_ENV !== 'production' && (
             <div className="bg-yellow-900/30 border border-yellow-700 rounded-lg p-4 text-xs font-mono space-y-1">
               <p className="text-yellow-300 font-bold">DEBUG (dev only)</p>
+              <p className="text-yellow-200">loopId: {loopId || 'not set'}</p>
+              <p className="text-yellow-200">jobId: {currentJobId ?? 'null'}</p>
               <p className="text-yellow-200">jobStatus: {currentJobId ? `polling (${currentJobId})` : isGenerating ? 'generating' : 'idle'}</p>
-              <p className="text-yellow-200">arrangementCount: {previewCandidates.length}</p>
+              <p className="text-yellow-200">arrangements.length: {previewCandidates.length}</p>
               <p className="text-yellow-200">selectedArrangementId: {selectedPreviewId ?? 'null'}</p>
               <p className="text-yellow-200">isGenerating: {String(isGenerating)}</p>
               <p className="text-yellow-200">arrangementId: {arrangementId ?? 'null'}</p>
