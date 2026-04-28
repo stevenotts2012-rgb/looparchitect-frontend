@@ -129,4 +129,4 @@ The app connects to the FastAPI backend via `NEXT_PUBLIC_API_URL`, for example `
 
 Proprietary - All Rights Reserved
 
-<!-- redeploy trigger: 2026-03-10 15:56:44 -04:00 -->
+<!-- redeploy trigger: 2026-04-28 22:42:26 +00:00 -->
