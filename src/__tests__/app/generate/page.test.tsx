@@ -555,6 +555,152 @@ describe('Job completion with arrangement_id', () => {
       expect(getArrangementStatus).toHaveBeenCalledWith(77)
     })
   })
+
+  it('handles "success" job status – stops polling and shows results', async () => {
+    ;(renderLoopAsync as jest.Mock).mockResolvedValue({ job_id: 'job-success' })
+    ;(getJobStatus as jest.Mock).mockResolvedValue({ status: 'success', arrangement_id: 88 })
+    ;(getArrangementStatus as jest.Mock).mockResolvedValue(makeArrangementStatus({ id: 88 }))
+    ;(listArrangements as jest.Mock).mockResolvedValue([makeArrangement({ id: 88 })])
+
+    await renderPage('1')
+
+    const loopInput = screen.getByRole('spinbutton', { name: /Loop ID/i })
+    await act(async () => {
+      fireEvent.change(loopInput, { target: { value: '1' } })
+    })
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /Generate Arrangement/i }))
+    })
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    await waitFor(() => {
+      expect(getArrangementStatus).toHaveBeenCalledWith(88)
+    })
+  })
+
+  it('emits JOB_SUCCESS_STATUS_RECEIVED when status is "success"', async () => {
+    ;(renderLoopAsync as jest.Mock).mockResolvedValue({ job_id: 'job-success' })
+    ;(getJobStatus as jest.Mock).mockResolvedValue({ status: 'success', arrangement_id: 88 })
+    ;(getArrangementStatus as jest.Mock).mockResolvedValue(makeArrangementStatus({ id: 88 }))
+    ;(listArrangements as jest.Mock).mockResolvedValue([makeArrangement({ id: 88 })])
+
+    await renderPage('1')
+
+    const loopInput = screen.getByRole('spinbutton', { name: /Loop ID/i })
+    await act(async () => {
+      fireEvent.change(loopInput, { target: { value: '1' } })
+    })
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /Generate Arrangement/i }))
+    })
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    await waitFor(() => {
+      expect(console.log).toHaveBeenCalledWith(
+        'JOB_SUCCESS_STATUS_RECEIVED',
+        expect.objectContaining({ status: 'success' })
+      )
+    })
+  })
+
+  it('handles job_terminal_state "success" even when status is non-terminal', async () => {
+    ;(renderLoopAsync as jest.Mock).mockResolvedValue({ job_id: 'job-terminal' })
+    ;(getJobStatus as jest.Mock).mockResolvedValue({
+      status: 'finished',
+      job_terminal_state: 'success',
+      arrangement_id: 91,
+    })
+    ;(getArrangementStatus as jest.Mock).mockResolvedValue(makeArrangementStatus({ id: 91 }))
+    ;(listArrangements as jest.Mock).mockResolvedValue([makeArrangement({ id: 91 })])
+
+    await renderPage('1')
+
+    const loopInput = screen.getByRole('spinbutton', { name: /Loop ID/i })
+    await act(async () => {
+      fireEvent.change(loopInput, { target: { value: '1' } })
+    })
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /Generate Arrangement/i }))
+    })
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    await waitFor(() => {
+      expect(getArrangementStatus).toHaveBeenCalledWith(91)
+    })
+  })
+
+  it('emits JOB_SUCCESS_STATUS_RECEIVED when job_terminal_state is "success"', async () => {
+    ;(renderLoopAsync as jest.Mock).mockResolvedValue({ job_id: 'job-terminal' })
+    ;(getJobStatus as jest.Mock).mockResolvedValue({
+      status: 'finished',
+      job_terminal_state: 'success',
+      arrangement_id: 91,
+    })
+    ;(getArrangementStatus as jest.Mock).mockResolvedValue(makeArrangementStatus({ id: 91 }))
+    ;(listArrangements as jest.Mock).mockResolvedValue([makeArrangement({ id: 91 })])
+
+    await renderPage('1')
+
+    const loopInput = screen.getByRole('spinbutton', { name: /Loop ID/i })
+    await act(async () => {
+      fireEvent.change(loopInput, { target: { value: '1' } })
+    })
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /Generate Arrangement/i }))
+    })
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    await waitFor(() => {
+      expect(console.log).toHaveBeenCalledWith(
+        'JOB_SUCCESS_STATUS_RECEIVED',
+        expect.objectContaining({ job_terminal_state: 'success' })
+      )
+    })
+  })
+
+  it('"success" status resets isGenerating so Generate button re-enables', async () => {
+    ;(renderLoopAsync as jest.Mock).mockResolvedValue({ job_id: 'job-success' })
+    ;(getJobStatus as jest.Mock).mockResolvedValue({ status: 'success', arrangement_id: 88 })
+    ;(getArrangementStatus as jest.Mock).mockResolvedValue(makeArrangementStatus({ id: 88 }))
+    ;(listArrangements as jest.Mock).mockResolvedValue([makeArrangement({ id: 88 })])
+
+    await renderPage('1')
+
+    const loopInput = screen.getByRole('spinbutton', { name: /Loop ID/i })
+    await act(async () => {
+      fireEvent.change(loopInput, { target: { value: '1' } })
+    })
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /Generate Arrangement/i }))
+    })
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    await waitFor(() => {
+      expect(screen.getByText(/Preview Variations/i)).toBeInTheDocument()
+    })
+    const regenBtn = screen.getByRole('button', { name: /Generate 3 New Variations/i })
+    expect(regenBtn).not.toBeDisabled()
+  })
 })
 
 // ===========================================================================

@@ -595,7 +595,11 @@ export default function GeneratePage() {
         console.log('JOB_POLL_RESPONSE', job)
         console.log('job_status_update', { job_id: currentJobId, status: job.status })
 
-        if (job.status === 'finished' || job.status === 'completed' || job.status === 'done') {
+        const isSuccessStatus = job.status === 'success' || job.job_terminal_state === 'success'
+        if (isSuccessStatus) {
+          console.log('JOB_SUCCESS_STATUS_RECEIVED', { job_id: currentJobId, status: job.status, job_terminal_state: job.job_terminal_state })
+        }
+        if (job.status === 'finished' || job.status === 'completed' || job.status === 'done' || isSuccessStatus) {
           if (jobPollingIntervalRef.current) {
             clearInterval(jobPollingIntervalRef.current)
             jobPollingIntervalRef.current = null

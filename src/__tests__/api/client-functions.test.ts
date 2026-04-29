@@ -246,6 +246,30 @@ describe('getJobStatus', () => {
     expect(result.audio_url).toBe('https://cdn.example.com/audio.wav')
   })
 
+  it('returns "success" status when backend reports success', async () => {
+    global.fetch = makeFetchMock({
+      job_id: 'job-abc-123',
+      status: 'success',
+      arrangement_id: 99,
+      audio_url: 'https://cdn.example.com/audio.wav',
+    })
+    const result = await getJobStatus('job-abc-123')
+    expect(result.status).toBe('success')
+    expect(result.arrangement_id).toBe(99)
+  })
+
+  it('returns job_terminal_state field when present in response', async () => {
+    global.fetch = makeFetchMock({
+      job_id: 'job-abc-123',
+      status: 'finished',
+      job_terminal_state: 'success',
+      arrangement_id: 99,
+    })
+    const result = await getJobStatus('job-abc-123')
+    expect(result.job_terminal_state).toBe('success')
+    expect(result.arrangement_id).toBe(99)
+  })
+
   it('throws LoopArchitectApiError on HTTP error', async () => {
     global.fetch = makeErrorFetchMock(500, { message: 'Internal server error' })
     await expect(getJobStatus('job-abc-123')).rejects.toBeInstanceOf(LoopArchitectApiError)
