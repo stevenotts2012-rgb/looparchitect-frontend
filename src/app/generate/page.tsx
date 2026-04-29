@@ -602,7 +602,7 @@ export default function GeneratePage() {
           }
           setCurrentJobId(null)
 
-          console.log("JOB_DONE_RESPONSE", job)
+          console.log("JOB COMPLETED", job)
           console.log('render_job_completed', { job_id: currentJobId, status: job.status, arrangement_id: job.arrangement_id ?? null })
 
           // Clear AI plan preview state immediately so the form/AI-plan section
@@ -617,24 +617,40 @@ export default function GeneratePage() {
             setAudioUrl(jobAudioUrl)
           }
 
+          // Use job.arrangement_id directly when present – avoids false "no
+          // arrangement" errors caused by stale state or a slow arrangements
+          // endpoint response.
+          if (job.arrangement_id) {
+            setPreviewCandidates([{
+              arrangement_id: job.arrangement_id,
+              status: 'done' as const,
+              audioUrl: jobAudioUrl ?? null,
+              created_at: job.updated_at || new Date().toISOString(),
+              render_job_id: job.job_id,
+              seed_used: job.seed_used,
+            }])
+            setSelectedPreviewId(job.arrangement_id)
+            setArrangementId(job.arrangement_id)
+            console.log('generated_results_displayed', { arrangement_id: job.arrangement_id, candidate_count: 1 })
+            if (job.structure_preview) {
+              setStructurePreview(job.structure_preview)
+            }
+            const loopIdNumEarly = loopId ? parseInt(loopId, 10) : undefined
+            await loadHistory(loopIdNumEarly && !Number.isNaN(loopIdNumEarly) ? loopIdNumEarly : undefined)
+            setError(null)
+            setIsGenerating(false)
+            return
+          }
+
           // Build candidate list from job response, falling back to a single
           // entry constructed from arrangement_id when no candidates array is
           // returned.
           let rawCandidates: ArrangementPreviewCandidate[] = (job.candidates && job.candidates.length > 0)
             ? job.candidates
-            : (job.arrangement_id
-              ? [{
-                  arrangement_id: job.arrangement_id,
-                  status: 'done' as const,
-                  created_at: job.updated_at || new Date().toISOString(),
-                  render_job_id: job.job_id,
-                  seed_used: job.seed_used,
-                }]
-              : [])
+            : []
 
-          // Always fetch the latest arrangements for this loop so we can show
-          // results even when the job response carries no candidates / arrangement_id.
-          // Also used to confirm the result when candidates ARE provided.
+          // Fetch the latest arrangements for this loop so we can show results
+          // even when the job response carries no candidates / arrangement_id.
           if (loopId) {
             const parsedLoopId = parseInt(loopId, 10)
             const MAX_ARRANGEMENTS_TO_FETCH = 10
@@ -673,7 +689,9 @@ export default function GeneratePage() {
             setArrangementId(rawCandidates[0].arrangement_id)
             console.log('generated_results_displayed', { arrangement_id: rawCandidates[0].arrangement_id, candidate_count: rawCandidates.length })
           } else {
-            setError('Render completed but no arrangement record was returned. This may indicate a temporary sync issue — please try generating again.')
+            // Backend succeeded but no arrangement data was returned; clear any
+            // prior error – only show an error if the job explicitly failed.
+            setError(null)
           }
 
           if (job.structure_preview) {
