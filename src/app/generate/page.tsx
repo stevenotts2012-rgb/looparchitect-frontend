@@ -592,22 +592,51 @@ export default function GeneratePage() {
       isPolling = true
       try {
         const job = await getJobStatus(currentJobId)
-        console.log('JOB_POLL_RESPONSE', job)
+        console.log("RAW_JOB_RESPONSE", job)
         console.log('job_status_update', { job_id: currentJobId, status: job.status })
 
-        const isSuccessStatus = job.status === 'success' || job.job_terminal_state === 'success'
+        // Normalise across alternative field names used by different backend versions.
+        // Prefer the canonical `status` field; fall back to `state` or `job_status`.
+        const effectiveStatus: string = job.status ?? job.state ?? job.job_status ?? 'unknown'
+        // Resolve arrangement_id from the top-level field or nested result/metadata.
+        const effectiveArrangementId: number | null =
+          job.arrangement_id ??
+          job.result?.arrangement_id ??
+          job.metadata?.arrangement_id ??
+          null
+        // Resolve terminal state from job_terminal_state or the alternative terminal_state field.
+        const effectiveTerminalState: string | null = job.job_terminal_state ?? job.terminal_state ?? null
+
+        const SUCCESS_STATUSES = new Set(['success', 'finished', 'completed', 'done'])
+        const isSuccessStatus = SUCCESS_STATUSES.has(effectiveStatus) || effectiveTerminalState === 'success'
+        const isFailedStatus = effectiveStatus === 'failed' || effectiveTerminalState === 'failed'
+
+        console.log("JOB_TERMINAL_FLAGS", {
+          status: job.status,
+          state: job.state,
+          job_status: job.job_status,
+          effectiveStatus,
+          job_terminal_state: job.job_terminal_state,
+          terminal_state: job.terminal_state,
+          effectiveTerminalState,
+          arrangement_id: job.arrangement_id,
+          result_arrangement_id: job.result?.arrangement_id ?? null,
+          metadata_arrangement_id: job.metadata?.arrangement_id ?? null,
+          effectiveArrangementId,
+          isSuccessStatus,
+          isFailedStatus,
+        })
+
         if (isSuccessStatus) {
-          console.log('JOB_SUCCESS_STATUS_RECEIVED', { job_id: currentJobId, status: job.status, job_terminal_state: job.job_terminal_state })
-        }
-        if (job.status === 'finished' || job.status === 'completed' || job.status === 'done' || isSuccessStatus) {
           if (jobPollingIntervalRef.current) {
             clearInterval(jobPollingIntervalRef.current)
             jobPollingIntervalRef.current = null
           }
           setCurrentJobId(null)
+          console.log('JOB_SUCCESS_DETECTED', { job_id: currentJobId, effectiveStatus, effectiveTerminalState })
 
           console.log("JOB COMPLETED", job)
-          console.log('render_job_completed', { job_id: currentJobId, status: job.status, arrangement_id: job.arrangement_id ?? null })
+          console.log('render_job_completed', { job_id: currentJobId, effectiveStatus, arrangement_id: effectiveArrangementId })
 
           // Clear AI plan preview state immediately so the form/AI-plan section
           // disappears and the generated results can take over the UI.
@@ -621,18 +650,18 @@ export default function GeneratePage() {
             setAudioUrl(jobAudioUrl)
           }
 
-          // Use job.arrangement_id directly when present – avoids false "no
-          // arrangement" errors caused by stale state or a slow arrangements
-          // endpoint response.
-          if (job.arrangement_id) {
-            console.log('JOB_COMPLETED_WITH_ARRANGEMENT_ID', job.arrangement_id)
-            console.log('AUTO_SELECT_ARRANGEMENT', job.arrangement_id)
+          // Use effectiveArrangementId (normalised from job.arrangement_id / result / metadata)
+          // when present – avoids false "no arrangement" errors caused by stale state
+          // or a slow arrangements endpoint response.
+          if (effectiveArrangementId) {
+            console.log('JOB_COMPLETED_WITH_ARRANGEMENT_ID', effectiveArrangementId)
+            console.log('AUTO_SELECT_ARRANGEMENT', effectiveArrangementId)
 
             // Immediately fetch arrangement status so the player/results area
             // renders without waiting for the next candidates-polling tick.
             let autoStatus: ArrangementStatusResponse | null = null
             try {
-              autoStatus = await getArrangementStatus(job.arrangement_id)
+              autoStatus = await getArrangementStatus(effectiveArrangementId)
             } catch (statusErr) {
               console.warn('[LoopArchitect] Failed to fetch arrangement status on job completion:', statusErr)
             }
@@ -653,7 +682,7 @@ export default function GeneratePage() {
             }
 
             setPreviewCandidates([{
-              arrangement_id: job.arrangement_id,
+              arrangement_id: effectiveArrangementId,
               status: 'done' as const,
               audioUrl: finalAudioUrl ?? null,
               created_at: job.updated_at || new Date().toISOString(),
@@ -661,9 +690,9 @@ export default function GeneratePage() {
               seed_used: job.seed_used,
               arrangementStatus: autoStatus ?? undefined,
             }])
-            setSelectedPreviewId(job.arrangement_id)
-            setArrangementId(job.arrangement_id)
-            console.log('generated_results_displayed', { arrangement_id: job.arrangement_id, candidate_count: 1 })
+            setSelectedPreviewId(effectiveArrangementId)
+            setArrangementId(effectiveArrangementId)
+            console.log('generated_results_displayed', { arrangement_id: effectiveArrangementId, candidate_count: 1 })
             if (job.structure_preview) {
               setStructurePreview(job.structure_preview)
             }
@@ -756,7 +785,7 @@ export default function GeneratePage() {
           const loopIdNum = loopId ? parseInt(loopId, 10) : undefined
           await loadHistory(loopIdNum && !Number.isNaN(loopIdNum) ? loopIdNum : undefined)
           setIsGenerating(false)
-        } else if (job.status === 'failed') {
+        } else if (isFailedStatus) {
           if (jobPollingIntervalRef.current) {
             clearInterval(jobPollingIntervalRef.current)
             jobPollingIntervalRef.current = null
