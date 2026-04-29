@@ -621,13 +621,41 @@ export default function GeneratePage() {
           // arrangement" errors caused by stale state or a slow arrangements
           // endpoint response.
           if (job.arrangement_id) {
+            console.log('JOB_COMPLETED_WITH_ARRANGEMENT_ID', job.arrangement_id)
+            console.log('AUTO_SELECT_ARRANGEMENT', job.arrangement_id)
+
+            // Immediately fetch arrangement status so the player/results area
+            // renders without waiting for the next candidates-polling tick.
+            let autoStatus: ArrangementStatusResponse | null = null
+            try {
+              autoStatus = await getArrangementStatus(job.arrangement_id)
+            } catch (statusErr) {
+              console.warn('[LoopArchitect] Failed to fetch arrangement status on job completion:', statusErr)
+            }
+
+            // Resolve best audio URL: prefer a directly-servable URL from the
+            // fresh status response, then fall back to the job-embedded URL.
+            const resolvedUrl = autoStatus ? resolveArrangementAudioUrl(autoStatus) : null
+            const finalAudioUrl = resolvedUrl || jobAudioUrl
+            if (finalAudioUrl) {
+              console.log('AUTO_LOAD_TRACK_URL', finalAudioUrl)
+              setAudioUrl(finalAudioUrl)
+            }
+
+            // Propagate arrangement status immediately so the player/results
+            // section renders without waiting for the candidates-polling effect.
+            if (autoStatus) {
+              setArrangementStatus(autoStatus)
+            }
+
             setPreviewCandidates([{
               arrangement_id: job.arrangement_id,
               status: 'done' as const,
-              audioUrl: jobAudioUrl ?? null,
+              audioUrl: finalAudioUrl ?? null,
               created_at: job.updated_at || new Date().toISOString(),
               render_job_id: job.job_id,
               seed_used: job.seed_used,
+              arrangementStatus: autoStatus ?? undefined,
             }])
             setSelectedPreviewId(job.arrangement_id)
             setArrangementId(job.arrangement_id)
@@ -680,9 +708,32 @@ export default function GeneratePage() {
           }
 
           if (rawCandidates.length > 0) {
-            const enriched = rawCandidates.map((c) => ({
+            console.log('AUTO_SELECT_ARRANGEMENT', rawCandidates[0].arrangement_id)
+
+            // Immediately fetch status for the auto-selected arrangement so the
+            // player/results section renders without waiting for the next
+            // candidates-polling tick (3 s delay).
+            let fallbackStatus: ArrangementStatusResponse | null = null
+            try {
+              fallbackStatus = await getArrangementStatus(rawCandidates[0].arrangement_id)
+            } catch (statusErr) {
+              console.warn('[LoopArchitect] Failed to fetch arrangement status on fallback selection:', statusErr)
+            }
+
+            const fallbackResolvedUrl = fallbackStatus ? resolveArrangementAudioUrl(fallbackStatus) : null
+            const fallbackFinalAudioUrl = fallbackResolvedUrl || jobAudioUrl
+            if (fallbackFinalAudioUrl) {
+              console.log('AUTO_LOAD_TRACK_URL', fallbackFinalAudioUrl)
+              setAudioUrl(fallbackFinalAudioUrl)
+            }
+            if (fallbackStatus) {
+              setArrangementStatus(fallbackStatus)
+            }
+
+            const enriched = rawCandidates.map((c, idx) => ({
               ...c,
-              audioUrl: jobAudioUrl ?? null,
+              audioUrl: idx === 0 ? (fallbackFinalAudioUrl ?? null) : (jobAudioUrl ?? null),
+              arrangementStatus: idx === 0 ? (fallbackStatus ?? undefined) : undefined,
             }))
             setPreviewCandidates(enriched)
             setSelectedPreviewId(rawCandidates[0].arrangement_id)
