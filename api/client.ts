@@ -1124,17 +1124,17 @@ export async function renderLoopAsync(
   try {
     const correlationId = generateCorrelationId();
 
-    let targetSeconds = options?.targetSeconds || options?.duration;
-    if (!targetSeconds && options?.bars) {
+    let targetLengthSeconds = options?.targetSeconds || options?.duration;
+    if (!targetLengthSeconds && options?.bars) {
       const bpm = options.loopBpm && options.loopBpm > 0 ? options.loopBpm : 120;
-      targetSeconds = Math.max(10, Math.round((options.bars * 4 * 60) / bpm));
+      targetLengthSeconds = Math.max(10, Math.round((options.bars * 4 * 60) / bpm));
     }
-    if (!targetSeconds) {
-      targetSeconds = 180;
+    if (!targetLengthSeconds) {
+      targetLengthSeconds = 180;
     }
 
     const requestBody: Record<string, unknown> = {
-      target_length_seconds: targetSeconds,
+      target_length_seconds: targetLengthSeconds,
     };
 
     // Send target_bars explicitly when the user specified an arrangement by bars

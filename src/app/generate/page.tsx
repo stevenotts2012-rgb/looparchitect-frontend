@@ -806,6 +806,9 @@ export default function GeneratePage() {
     if (currentJobIds.length === 0) return
 
     let cancelled = false
+    /** Guards against the cleanup path running more than once (e.g. two
+     *  overlapping interval ticks that both finish after clearInterval). */
+    let batchCleanupDone = false
     const remaining = new Set(currentJobIds)
     const intervals = new Map<string, NodeJS.Timeout>()
 
@@ -816,6 +819,8 @@ export default function GeneratePage() {
         if (cancelled) return
 
         if (job.status === 'finished' || job.status === 'completed' || job.status === 'done') {
+          // Stop this job's interval before mutating shared state so overlapping
+          // ticks don't re-enter this branch and double-trigger batch cleanup.
           const iv = intervals.get(jobId)
           if (iv) { clearInterval(iv); intervals.delete(jobId) }
           remaining.delete(jobId)
@@ -861,7 +866,10 @@ export default function GeneratePage() {
           }
 
           // When all jobs in this batch have settled, clear the generating state.
-          if (remaining.size === 0) {
+          // Guard with batchCleanupDone to prevent double-invocation from
+          // overlapping interval ticks that both observe remaining.size === 0.
+          if (remaining.size === 0 && !batchCleanupDone) {
+            batchCleanupDone = true
             const loopIdNum = loopId ? parseInt(loopId, 10) : undefined
             await loadHistory(loopIdNum && !Number.isNaN(loopIdNum) ? loopIdNum : undefined)
             if (!cancelled) {
@@ -875,9 +883,12 @@ export default function GeneratePage() {
           if (iv) { clearInterval(iv); intervals.delete(jobId) }
           remaining.delete(jobId)
           console.warn(`[multi-job] job ${jobId} failed:`, job.error_message)
-          if (remaining.size === 0 && !cancelled) {
-            setCurrentJobIds([])
-            setIsGenerating(false)
+          if (remaining.size === 0 && !batchCleanupDone) {
+            batchCleanupDone = true
+            if (!cancelled) {
+              setCurrentJobIds([])
+              setIsGenerating(false)
+            }
           }
         }
       } catch (err) {
