@@ -21,7 +21,12 @@ function getBackendOrigin(): string | null {
     return 'http://localhost:8000'
   }
 
-  return 'https://web-production-3afc5.up.railway.app'
+  // No hardcoded fallback: return null so the proxy returns a clear 500 error
+  // rather than silently routing to the wrong backend (e.g. production instead
+  // of staging).  Set BACKEND_ORIGIN in your Vercel environment variables:
+  //   Staging:    https://web-staging-cb7b.up.railway.app
+  //   Production: https://web-production-3afc5.up.railway.app
+  return null
 }
 
 function buildTargetUrl(request: NextRequest, pathSegments: string[], method: AllowedMethod): string | null {

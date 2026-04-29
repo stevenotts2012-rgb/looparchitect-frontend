@@ -42,12 +42,16 @@ function makeLoopResponse(id = 1) {
 beforeEach(() => {
   // Provide a clean fetch mock before each test
   global.fetch = makeFetchMock(makeLoopResponse())
+  // Set the backend origin so getUploadUrl() resolves correctly (no hardcoded fallback)
+  process.env.NEXT_PUBLIC_BACKEND_ORIGIN = RAILWAY_ORIGIN
   // Silence intentional console.debug noise in test output
   jest.spyOn(console, 'debug').mockImplementation(() => {})
   jest.spyOn(console, 'info').mockImplementation(() => {})
+  jest.spyOn(console, 'log').mockImplementation(() => {})
 })
 
 afterEach(() => {
+  delete process.env.NEXT_PUBLIC_BACKEND_ORIGIN
   jest.restoreAllMocks()
 })
 
