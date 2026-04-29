@@ -1085,11 +1085,21 @@ export interface RenderAsyncResponse {
 export interface JobStatusResponse {
   job_id: string;
   status: 'queued' | 'pending' | 'processing' | 'finished' | 'completed' | 'done' | 'failed' | 'success';
+  /** Alternative status field used by some backend versions. */
+  state?: string | null;
   job_terminal_state?: string | null;
+  /** Alternative terminal-state field used by some backend versions. */
+  terminal_state?: string | null;
+  /** Alternative status field used by some backend versions. */
+  job_status?: string | null;
   render_plan_json?: Record<string, unknown> | null;
   audio_url?: string | null;
   preview_url?: string | null;
   arrangement_id?: number | null;
+  /** Nested result object – some backend versions embed arrangement_id here. */
+  result?: { arrangement_id?: number | null; [key: string]: unknown } | null;
+  /** Nested metadata object – some backend versions embed arrangement_id here. */
+  metadata?: { arrangement_id?: number | null; [key: string]: unknown } | null;
   candidates?: ArrangementPreviewCandidate[] | null;
   error_message?: string | null;
   created_at?: string;
