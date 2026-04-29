@@ -1066,6 +1066,8 @@ export async function analyzeReferenceTrack(
  */
 export interface RenderAsyncResponse {
   job_id: string;
+  /** Present when the backend dispatches one job per variation. */
+  job_ids?: string[];
   loop_id?: number;
   status?: string;
   message?: string;
@@ -1102,6 +1104,7 @@ export async function renderLoopAsync(
     bars?: number;
     loopBpm?: number;
     genre?: string;
+    vibe?: string;
     intensity?: string;
     includeStems?: boolean;
     stylePreset?: string;
@@ -1121,25 +1124,32 @@ export async function renderLoopAsync(
   try {
     const correlationId = generateCorrelationId();
 
-    let targetSeconds = options?.targetSeconds || options?.duration;
-    if (!targetSeconds && options?.bars) {
+    let targetLengthSeconds = options?.targetSeconds || options?.duration;
+    if (!targetLengthSeconds && options?.bars) {
       const bpm = options.loopBpm && options.loopBpm > 0 ? options.loopBpm : 120;
-      targetSeconds = Math.max(10, Math.round((options.bars * 4 * 60) / bpm));
+      targetLengthSeconds = Math.max(10, Math.round((options.bars * 4 * 60) / bpm));
     }
-    if (!targetSeconds) {
-      targetSeconds = 180;
+    if (!targetLengthSeconds) {
+      targetLengthSeconds = 180;
     }
 
     const requestBody: Record<string, unknown> = {
-      target_seconds: targetSeconds,
+      target_length_seconds: targetLengthSeconds,
     };
 
+    // Send target_bars explicitly when the user specified an arrangement by bars
+    if (options?.bars) requestBody.target_bars = options.bars;
+
     if (options?.genre) requestBody.genre = options.genre;
+    if (options?.vibe) requestBody.vibe = options.vibe;
     if (options?.intensity) requestBody.intensity = options.intensity;
     if (options?.includeStems !== undefined) requestBody.include_stems = options.includeStems;
     if (options?.stylePreset) requestBody.style_preset = options.stylePreset;
     if (options?.styleParams) requestBody.style_params = options.styleParams;
-    if (options?.seed !== undefined) requestBody.seed = options.seed;
+    if (options?.seed !== undefined) {
+      requestBody.seed = options.seed;
+      requestBody.variation_seed = options.seed;
+    }
     if (options?.variationCount !== undefined) requestBody.variation_count = options.variationCount;
     if (options?.autoSave !== undefined) requestBody.auto_save = options.autoSave;
     if (options?.styleTextInput) requestBody.style_text_input = options.styleTextInput;
