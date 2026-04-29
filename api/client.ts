@@ -137,6 +137,7 @@ export interface ArrangementPreviewCandidate {
   created_at: string;
   render_job_id?: string;
   seed_used?: number;
+  audioUrl?: string | null;
 }
 
 

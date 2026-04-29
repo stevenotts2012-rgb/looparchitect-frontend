@@ -210,7 +210,7 @@ export function deriveSectionState(candidate: {
   status: string
   audioUrl?: string | null
   audioUnavailable?: boolean
-  arrangementStatus?: { preview_status?: string | null } | null
+  arrangementStatus?: { preview_status?: string | null; id?: number; status?: string } | null
 }): SectionState {
   const { status, audioUrl, audioUnavailable, arrangementStatus } = candidate
 
