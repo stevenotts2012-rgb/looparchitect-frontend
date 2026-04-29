@@ -89,6 +89,21 @@ describe('renderLoopAsync', () => {
     expect(url).toContain('/v1/loops/1/render-async')
   })
 
+  it('calls fetch with a fully-qualified https URL, never a relative /api/... path', async () => {
+    global.fetch = makeFetchMock(mockRenderResponse)
+    await renderLoopAsync(1, { targetSeconds: 60 })
+    const [[url]] = (global.fetch as jest.Mock).mock.calls
+    expect(url).toMatch(/^https?:\/\//)
+    expect(url).not.toMatch(/^\/api\//)
+  })
+
+  it('targets the Railway backend origin for the render-async endpoint', async () => {
+    global.fetch = makeFetchMock(mockRenderResponse)
+    await renderLoopAsync(1, { targetSeconds: 60 })
+    const [[url]] = (global.fetch as jest.Mock).mock.calls
+    expect(url).toBe('https://web-production-3afc5.up.railway.app/api/v1/loops/1/render-async')
+  })
+
   it('sends target_seconds in the request body', async () => {
     global.fetch = makeFetchMock(mockRenderResponse)
     await renderLoopAsync(5, { targetSeconds: 120 })

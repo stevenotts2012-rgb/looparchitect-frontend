@@ -1158,7 +1158,7 @@ export async function renderLoopAsync(
     if (options?.adaptationStrength) requestBody.adaptation_strength = options.adaptationStrength;
     if (options?.guidanceMode) requestBody.guidance_mode = options.guidanceMode;
 
-    const url = apiUrl(`/v1/loops/${loopId}/render-async`);
+    const url = getUploadUrl(`/v1/loops/${loopId}/render-async`);
     console.log('RENDER_ASYNC_FULL_URL', url);
     const response = await fetch(url, {
       method: 'POST',
