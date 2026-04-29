@@ -1084,7 +1084,8 @@ export interface RenderAsyncResponse {
  */
 export interface JobStatusResponse {
   job_id: string;
-  status: 'queued' | 'pending' | 'processing' | 'finished' | 'completed' | 'done' | 'failed';
+  status: 'queued' | 'pending' | 'processing' | 'finished' | 'completed' | 'done' | 'failed' | 'success';
+  job_terminal_state?: string | null;
   render_plan_json?: Record<string, unknown> | null;
   audio_url?: string | null;
   preview_url?: string | null;
