@@ -11,8 +11,6 @@
 //
 // Upload URL resolution lives exclusively in `getUploadUrl()` in api/client.ts.
 
-const DEFAULT_BACKEND_ORIGIN = 'https://web-production-3afc5.up.railway.app'
-
 function getApiBasePath(): string {
   // In the browser, use a relative path so all API calls are routed through
   // the Next.js API proxy route (src/app/api/[...path]/route.ts), which then
@@ -35,7 +33,12 @@ function getApiBasePath(): string {
     return 'http://localhost:8000/api'
   }
 
-  return `${DEFAULT_BACKEND_ORIGIN}/api`
+  // No hardcoded fallback: throw so misconfigured deployments fail loudly
+  // instead of silently routing to the wrong backend (e.g. production instead
+  // of staging).  Set BACKEND_ORIGIN in your Vercel environment variables:
+  //   Staging:    https://web-staging-cb7b.up.railway.app
+  //   Production: https://web-production-3afc5.up.railway.app
+  throw new Error('BACKEND_ORIGIN environment variable is not set. Cannot determine API base path.')
 }
 
 function apiUrl(path: string): string {

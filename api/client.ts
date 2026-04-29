@@ -1,8 +1,6 @@
 // API Client for LoopArchitect Frontend
 // Connects Next.js frontend to FastAPI backend on Railway
 
-const DEFAULT_BACKEND_ORIGIN = 'https://web-production-3afc5.up.railway.app';
-
 function getApiBasePath(): string {
   // In the browser, use a relative path so all API calls are routed through
   // the Next.js API proxy route (src/app/api/[...path]/route.ts), which then
@@ -22,7 +20,12 @@ function getApiBasePath(): string {
     return 'http://localhost:8000/api';
   }
 
-  return `${DEFAULT_BACKEND_ORIGIN}/api`;
+  // No hardcoded fallback: throw so misconfigured deployments fail loudly
+  // instead of silently routing to the wrong backend (e.g. production instead
+  // of staging).  Set BACKEND_ORIGIN in your Vercel environment variables:
+  //   Staging:    https://web-staging-cb7b.up.railway.app
+  //   Production: https://web-production-3afc5.up.railway.app
+  throw new Error('BACKEND_ORIGIN environment variable is not set. Cannot determine API base path.');
 }
 
 function apiUrl(path: string): string {
@@ -32,9 +35,10 @@ function apiUrl(path: string): string {
 
 // For multipart file uploads the browser must bypass the Next.js/Vercel proxy
 // (which has a request-body size limit that causes 413 errors) and POST directly
-// to the Railway backend.  We resolve the origin the same way the server side
-// does: honour NEXT_PUBLIC_API_URL when it is a full URL, then fall back to the
-// hard-coded Railway origin.
+// to the Railway backend.  NEXT_PUBLIC_BACKEND_ORIGIN must be set at build time
+// in Vercel environment variables:
+//   Staging:    https://web-staging-cb7b.up.railway.app
+//   Production: https://web-production-3afc5.up.railway.app
 function getUploadUrl(path: string): string {
   const normalized = path.startsWith('/') ? path : `/${path}`;
 
@@ -44,12 +48,15 @@ function getUploadUrl(path: string): string {
   }
 
   // Browser: go directly to the backend, skipping the Vercel proxy.
-  // NEXT_PUBLIC_API_URL is inlined at build time by Next.js so it is safe to
-  // reference directly here.
-  const configured = (process.env.NEXT_PUBLIC_API_URL || '').trim();
-  const origin = (configured.startsWith('http://') || configured.startsWith('https://'))
-    ? configured.replace(/\/$/, '')
-    : DEFAULT_BACKEND_ORIGIN;
+  // NEXT_PUBLIC_BACKEND_ORIGIN (preferred) or NEXT_PUBLIC_API_URL are inlined
+  // at build time by Next.js so they are safe to reference here.
+  const configured = (process.env.NEXT_PUBLIC_BACKEND_ORIGIN || process.env.NEXT_PUBLIC_API_URL || '').trim();
+  if (!configured.startsWith('http://') && !configured.startsWith('https://')) {
+    throw new Error(
+      'NEXT_PUBLIC_BACKEND_ORIGIN environment variable is not set. Cannot determine upload URL.'
+    );
+  }
+  const origin = configured.replace(/\/$/, '');
 
   return `${origin}/api${normalized}`;
 }
@@ -1151,7 +1158,9 @@ export async function renderLoopAsync(
     if (options?.adaptationStrength) requestBody.adaptation_strength = options.adaptationStrength;
     if (options?.guidanceMode) requestBody.guidance_mode = options.guidanceMode;
 
-    const response = await fetch(apiUrl(`/v1/loops/${loopId}/render-async`), {
+    const url = apiUrl(`/v1/loops/${loopId}/render-async`);
+    console.log('RENDER_ASYNC_FULL_URL', url);
+    const response = await fetch(url, {
       method: 'POST',
       headers: createJsonHeaders(correlationId),
       body: JSON.stringify(requestBody),

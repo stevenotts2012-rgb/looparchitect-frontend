@@ -60,9 +60,13 @@ beforeEach(() => {
   jest.spyOn(console, 'info').mockImplementation(() => {})
   jest.spyOn(console, 'warn').mockImplementation(() => {})
   jest.spyOn(console, 'error').mockImplementation(() => {})
+  jest.spyOn(console, 'log').mockImplementation(() => {})
+  // Set backend origin so getUploadUrl() resolves (no hardcoded fallback)
+  process.env.NEXT_PUBLIC_BACKEND_ORIGIN = 'https://web-production-3afc5.up.railway.app'
 })
 
 afterEach(() => {
+  delete process.env.NEXT_PUBLIC_BACKEND_ORIGIN
   jest.restoreAllMocks()
 })
 
