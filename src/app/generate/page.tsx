@@ -134,6 +134,8 @@ export default function GeneratePage() {
   })
 
   const [currentJobId, setCurrentJobId] = useState<string | null>(null)
+  /** Tracks multiple job IDs returned by render-async when variation_count > 1. */
+  const [currentJobIds, setCurrentJobIds] = useState<string[]>([])
 
   const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null)
   const pollingErrorCountRef = useRef<number>(0)
@@ -617,10 +619,19 @@ export default function GeneratePage() {
             setAudioUrl(jobAudioUrl)
           }
 
-          // Use job.arrangement_id directly when present – avoids false "no
-          // arrangement" errors caused by stale state or a slow arrangements
-          // endpoint response.
-          if (job.arrangement_id) {
+          // Build candidate list from job response.
+          //
+          // IMPORTANT: prefer job.candidates (multiple variations) over the
+          // single job.arrangement_id path.  Previously the arrangement_id
+          // path used an early `return`, which meant job.candidates was never
+          // reached even when the backend populated it with 3 variations.
+          let rawCandidates: ArrangementPreviewCandidate[] = (job.candidates && job.candidates.length > 0)
+            ? job.candidates
+            : []
+
+          // Fallback: build a single-candidate list from job.arrangement_id
+          // when no candidates array was returned by the backend.
+          if (rawCandidates.length === 0 && job.arrangement_id) {
             console.log('JOB_COMPLETED_WITH_ARRANGEMENT_ID', job.arrangement_id)
             console.log('AUTO_SELECT_ARRANGEMENT', job.arrangement_id)
 
@@ -648,7 +659,7 @@ export default function GeneratePage() {
               setArrangementStatus(autoStatus)
             }
 
-            setPreviewCandidates([{
+            rawCandidates = [{
               arrangement_id: job.arrangement_id,
               status: 'done' as const,
               audioUrl: finalAudioUrl ?? null,
@@ -656,26 +667,8 @@ export default function GeneratePage() {
               render_job_id: job.job_id,
               seed_used: job.seed_used,
               arrangementStatus: autoStatus ?? undefined,
-            }])
-            setSelectedPreviewId(job.arrangement_id)
-            setArrangementId(job.arrangement_id)
-            console.log('generated_results_displayed', { arrangement_id: job.arrangement_id, candidate_count: 1 })
-            if (job.structure_preview) {
-              setStructurePreview(job.structure_preview)
-            }
-            const loopIdNumEarly = loopId ? parseInt(loopId, 10) : undefined
-            await loadHistory(loopIdNumEarly && !Number.isNaN(loopIdNumEarly) ? loopIdNumEarly : undefined)
-            setError(null)
-            setIsGenerating(false)
-            return
+            }]
           }
-
-          // Build candidate list from job response, falling back to a single
-          // entry constructed from arrangement_id when no candidates array is
-          // returned.
-          let rawCandidates: ArrangementPreviewCandidate[] = (job.candidates && job.candidates.length > 0)
-            ? job.candidates
-            : []
 
           // Fetch the latest arrangements for this loop so we can show results
           // even when the job response carries no candidates / arrangement_id.
@@ -713,11 +706,16 @@ export default function GeneratePage() {
             // Immediately fetch status for the auto-selected arrangement so the
             // player/results section renders without waiting for the next
             // candidates-polling tick (3 s delay).
-            let fallbackStatus: ArrangementStatusResponse | null = null
-            try {
-              fallbackStatus = await getArrangementStatus(rawCandidates[0].arrangement_id)
-            } catch (statusErr) {
-              console.warn('[LoopArchitect] Failed to fetch arrangement status on fallback selection:', statusErr)
+            // Skip refetch when the candidate already has arrangementStatus set
+            // (e.g. populated by the job.arrangement_id fallback above).
+            let fallbackStatus: ArrangementStatusResponse | null =
+              rawCandidates[0].arrangementStatus ?? null
+            if (!fallbackStatus) {
+              try {
+                fallbackStatus = await getArrangementStatus(rawCandidates[0].arrangement_id)
+              } catch (statusErr) {
+                console.warn('[LoopArchitect] Failed to fetch arrangement status on fallback selection:', statusErr)
+              }
             }
 
             const fallbackResolvedUrl = fallbackStatus ? resolveArrangementAudioUrl(fallbackStatus) : null
@@ -732,13 +730,19 @@ export default function GeneratePage() {
 
             const enriched = rawCandidates.map((c, idx) => ({
               ...c,
-              audioUrl: idx === 0 ? (fallbackFinalAudioUrl ?? null) : (jobAudioUrl ?? null),
-              arrangementStatus: idx === 0 ? (fallbackStatus ?? undefined) : undefined,
+              // Preserve an already-resolved audio URL (set by job.arrangement_id path)
+              audioUrl: idx === 0
+                ? (fallbackFinalAudioUrl ?? c.audioUrl ?? null)
+                : (c.audioUrl ?? jobAudioUrl ?? null),
+              arrangementStatus: idx === 0
+                ? (fallbackStatus ?? c.arrangementStatus ?? undefined)
+                : (c.arrangementStatus ?? undefined),
             }))
             setPreviewCandidates(enriched)
             setSelectedPreviewId(rawCandidates[0].arrangement_id)
             setArrangementId(rawCandidates[0].arrangement_id)
-            console.log('generated_results_displayed', { arrangement_id: rawCandidates[0].arrangement_id, candidate_count: rawCandidates.length })
+            console.log('VARIATIONS_RENDERED_COUNT', enriched.length)
+            console.log('generated_results_displayed', { arrangement_id: rawCandidates[0].arrangement_id, candidate_count: enriched.length })
           } else {
             // Backend succeeded but no arrangement data was returned; clear any
             // prior error – only show an error if the job explicitly failed.
@@ -792,7 +796,111 @@ export default function GeneratePage() {
     }
   }, [currentJobId, loadHistory, loopId])
 
-  // Sync selectedPreviewId → main arrangement state.
+  // Poll multiple async render jobs in parallel.
+  //
+  // Activated when `currentJobIds` is set to an array of job IDs returned by
+  // render-async (one ID per variation).  Each job is polled independently;
+  // when it finishes, its arrangement is appended to `previewCandidates`.
+  // `isGenerating` is cleared once every job in the batch has settled.
+  useEffect(() => {
+    if (currentJobIds.length === 0) return
+
+    let cancelled = false
+    const remaining = new Set(currentJobIds)
+    const intervals = new Map<string, NodeJS.Timeout>()
+
+    const pollOneJob = async (jobId: string) => {
+      if (cancelled) return
+      try {
+        const job = await getJobStatus(jobId)
+        if (cancelled) return
+
+        if (job.status === 'finished' || job.status === 'completed' || job.status === 'done') {
+          const iv = intervals.get(jobId)
+          if (iv) { clearInterval(iv); intervals.delete(jobId) }
+          remaining.delete(jobId)
+
+          // Extract arrangement(s) from completed job
+          const jobAudioUrl = job.audio_url || job.preview_url || null
+          const newCandidates: (ArrangementPreviewCandidate & { audioUrl?: string | null })[] = []
+
+          if (job.candidates && job.candidates.length > 0) {
+            newCandidates.push(...job.candidates)
+          } else if (job.arrangement_id) {
+            let autoStatus: ArrangementStatusResponse | null = null
+            try { autoStatus = await getArrangementStatus(job.arrangement_id) } catch { /* ignore */ }
+            const resolvedUrl = autoStatus ? resolveArrangementAudioUrl(autoStatus) : null
+            newCandidates.push({
+              arrangement_id: job.arrangement_id,
+              status: 'done' as const,
+              audioUrl: resolvedUrl || jobAudioUrl || null,
+              created_at: job.updated_at || new Date().toISOString(),
+              render_job_id: job.job_id,
+              seed_used: job.seed_used,
+              arrangementStatus: autoStatus ?? undefined,
+            })
+          }
+
+          if (newCandidates.length > 0) {
+            setPreviewCandidates((prev) => {
+              // Avoid duplicates when candidate already appears (e.g. from single-job path)
+              const existingIds = new Set(prev.map((c) => c.arrangement_id))
+              const toAdd = newCandidates.filter((c) => !existingIds.has(c.arrangement_id))
+              if (toAdd.length === 0) return prev
+              const next = [...prev, ...toAdd]
+              console.log('VARIATIONS_RENDERED_COUNT', next.length)
+              return next
+            })
+            // Auto-select first variation if nothing is selected yet
+            setSelectedPreviewId((prev) => prev ?? newCandidates[0].arrangement_id)
+            setArrangementId((prev) => prev ?? newCandidates[0].arrangement_id)
+          }
+
+          if (job.structure_preview) {
+            setStructurePreview(job.structure_preview)
+          }
+
+          // When all jobs in this batch have settled, clear the generating state.
+          if (remaining.size === 0) {
+            const loopIdNum = loopId ? parseInt(loopId, 10) : undefined
+            await loadHistory(loopIdNum && !Number.isNaN(loopIdNum) ? loopIdNum : undefined)
+            if (!cancelled) {
+              setCurrentJobIds([])
+              setIsGenerating(false)
+              setError(null)
+            }
+          }
+        } else if (job.status === 'failed') {
+          const iv = intervals.get(jobId)
+          if (iv) { clearInterval(iv); intervals.delete(jobId) }
+          remaining.delete(jobId)
+          console.warn(`[multi-job] job ${jobId} failed:`, job.error_message)
+          if (remaining.size === 0 && !cancelled) {
+            setCurrentJobIds([])
+            setIsGenerating(false)
+          }
+        }
+      } catch (err) {
+        console.error(`[multi-job] poll error for ${jobId}:`, err)
+      }
+    }
+
+    // Kick off parallel polling for every job
+    for (const jobId of currentJobIds) {
+      const iv = setInterval(() => pollOneJob(jobId), 3000)
+      intervals.set(jobId, iv)
+      // Fire immediate first poll
+      pollOneJob(jobId)
+    }
+
+    return () => {
+      cancelled = true
+      intervals.forEach((iv) => clearInterval(iv))
+      intervals.clear()
+    }
+  }, [currentJobIds, loadHistory, loopId])
+
+
   //
   // DEFENSIVE FIX: When `previewCandidates` updates (e.g. after a poll tick) but
   // `selected.audioUrl` is still null/undefined (audio not yet downloaded), we
@@ -1044,6 +1152,7 @@ export default function GeneratePage() {
     setArrangementId(null)
     setArrangementStatus(null)
     clearPreviewCandidates()
+    setCurrentJobIds([])
     setStructurePreview([])
     setDebugReport(null)
     setAiPlanDraft(null)
@@ -1084,6 +1193,7 @@ export default function GeneratePage() {
         bars?: number
         duration?: number
         loopBpm?: number
+        genre?: string
         stylePreset?: string
         styleParams?: Record<string, number | string>
         seed?: number | string
@@ -1107,6 +1217,7 @@ export default function GeneratePage() {
         }
         options.bars = barsNum
         options.loopBpm = loopBpm
+        console.log('REQUESTED_LENGTH', { type: 'bars', bars: barsNum, loopBpm })
       } else {
         const durationNum = parseInt(duration, 10)
         if (isNaN(durationNum) || durationNum <= 0) {
@@ -1115,6 +1226,12 @@ export default function GeneratePage() {
           return
         }
         options.duration = durationNum
+        console.log('REQUESTED_LENGTH', { type: 'duration', seconds: durationNum })
+      }
+
+      // Forward genre/vibe from the loop metadata when available
+      if (loopDetails.genre) {
+        options.genre = loopDetails.genre
       }
 
       // V2: Include natural language style input if in that mode
@@ -1150,6 +1267,7 @@ export default function GeneratePage() {
 
       options.variationCount = 3
       options.autoSave = false
+      console.log('VARIATION_COUNT_REQUESTED', 3)
 
       // Include reference guidance parameters when a reference has been analyzed
       if (referenceAnalysisId) {
@@ -1198,9 +1316,22 @@ export default function GeneratePage() {
       console.log('render_async_started', { loop_id: loopIdNum })
       const renderResponse = await renderLoopAsync(loopIdNum, options)
       console.log('RENDER_ASYNC_RESPONSE', renderResponse)
-      console.log('job_id_received', { job_id: renderResponse.job_id, loop_id: loopIdNum })
-      setCurrentJobId(renderResponse.job_id)
-      jobDispatched = true
+
+      // Handle multiple job_ids (one per variation) or a single job_id.
+      const allJobIds: string[] = renderResponse.job_ids && renderResponse.job_ids.length > 0
+        ? renderResponse.job_ids
+        : (renderResponse.job_id ? [renderResponse.job_id] : [])
+      console.log('JOB_IDS_RECEIVED', allJobIds)
+
+      if (allJobIds.length > 1) {
+        // Multiple jobs: each is polled independently via the currentJobIds effect.
+        setCurrentJobIds(allJobIds)
+      } else if (allJobIds.length === 1) {
+        // Single job: use the existing single-job polling mechanism.
+        console.log('job_id_received', { job_id: allJobIds[0], loop_id: loopIdNum })
+        setCurrentJobId(allJobIds[0])
+      }
+      jobDispatched = allJobIds.length > 0
 
       // Optimistic history refresh so the row appears immediately.
       await loadHistory(loopIdNum)
