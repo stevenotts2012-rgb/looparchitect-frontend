@@ -979,3 +979,262 @@ describe('loopId pre-populated from URL query param', () => {
     global.URLSearchParams = OriginalURLSearchParams
   })
 })
+
+// ===========================================================================
+// Tests: loadHistory failure does not block isGenerating
+// ===========================================================================
+
+describe('loadHistory failure does not keep isGenerating true', () => {
+  it('resets isGenerating after job success even when listArrangements rejects', async () => {
+    ;(renderLoopAsync as jest.Mock).mockResolvedValue({ job_id: 'job-hist-fail' })
+    ;(getJobStatus as jest.Mock).mockResolvedValue({ status: 'finished', arrangement_id: 42 })
+    ;(getArrangementStatus as jest.Mock).mockResolvedValue(makeArrangementStatus({ id: 42 }))
+    // Make listArrangements always reject so loadHistory always fails
+    ;(listArrangements as jest.Mock).mockRejectedValue(new Error('DB connection failed'))
+
+    await renderPage('1')
+
+    const loopInput = screen.getByRole('spinbutton', { name: /Loop ID/i })
+    await act(async () => {
+      fireEvent.change(loopInput, { target: { value: '1' } })
+    })
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /Generate Arrangement/i }))
+    })
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    // The Generate button must be re-enabled (isGenerating=false) even though
+    // loadHistory failed – the job polling flow sets isGenerating=false before
+    // any loadHistory call.
+    await waitFor(() => {
+      expect(screen.getByText(/Preview Variations/i)).toBeInTheDocument()
+    })
+    const regenBtn = screen.getByRole('button', { name: /Generate 3 New Variations/i })
+    expect(regenBtn).not.toBeDisabled()
+  })
+})
+
+// ===========================================================================
+// Tests: 90-second timeout clears generating state
+// ===========================================================================
+
+describe('90-second timeout clears generating state', () => {
+  it('stops polling and shows error after 90 seconds', async () => {
+    ;(renderLoopAsync as jest.Mock).mockResolvedValue({ job_id: 'job-timeout' })
+    // Job never reaches terminal state – always returns processing
+    ;(getJobStatus as jest.Mock).mockResolvedValue({ status: 'processing' })
+
+    await renderPage('1')
+
+    const loopInput = screen.getByRole('spinbutton', { name: /Loop ID/i })
+    await act(async () => {
+      fireEvent.change(loopInput, { target: { value: '1' } })
+    })
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /Generate Arrangement/i }))
+    })
+    // Let the initial renderLoopAsync and first poll fire
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    // Advance timers by 90 seconds to trigger the timeout
+    await act(async () => {
+      jest.advanceTimersByTime(90_000)
+    })
+
+    // isGenerating must be false and an error must be shown
+    await waitFor(() => {
+      expect(screen.getByText(/timed out after 90 seconds/i)).toBeInTheDocument()
+    })
+    const generateBtn = screen.getByRole('button', { name: /Generate Arrangement/i })
+    expect(generateBtn).not.toBeDisabled()
+  })
+})
+
+// ===========================================================================
+// Tests: failed job clears generating state
+// ===========================================================================
+
+describe('Failed job clears generating state', () => {
+  it('re-enables Generate button after job fails', async () => {
+    ;(renderLoopAsync as jest.Mock).mockResolvedValue({ job_id: 'job-fail-btn' })
+    ;(getJobStatus as jest.Mock).mockResolvedValue({
+      status: 'failed',
+      error_message: 'Worker crashed',
+    })
+
+    await renderPage('1')
+
+    const loopInput = screen.getByRole('spinbutton', { name: /Loop ID/i })
+    await act(async () => {
+      fireEvent.change(loopInput, { target: { value: '1' } })
+    })
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /Generate Arrangement/i }))
+    })
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    await waitFor(() => {
+      expect(screen.getByText(/Worker crashed/i)).toBeInTheDocument()
+    })
+    // Generate button must be re-enabled after failure
+    const generateBtn = screen.getByRole('button', { name: /Generate Arrangement/i })
+    expect(generateBtn).not.toBeDisabled()
+  })
+
+  it('re-enables Generate button after "error" job status', async () => {
+    ;(renderLoopAsync as jest.Mock).mockResolvedValue({ job_id: 'job-error-status' })
+    ;(getJobStatus as jest.Mock).mockResolvedValue({
+      status: 'error',
+      error_message: 'Internal render error',
+    })
+
+    await renderPage('1')
+
+    const loopInput = screen.getByRole('spinbutton', { name: /Loop ID/i })
+    await act(async () => {
+      fireEvent.change(loopInput, { target: { value: '1' } })
+    })
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /Generate Arrangement/i }))
+    })
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    await waitFor(() => {
+      expect(screen.getByText(/Internal render error/i)).toBeInTheDocument()
+    })
+    const generateBtn = screen.getByRole('button', { name: /Generate Arrangement/i })
+    expect(generateBtn).not.toBeDisabled()
+  })
+})
+
+// ===========================================================================
+// Tests: required console.log identifiers
+// ===========================================================================
+
+describe('Required console.log identifiers', () => {
+  async function triggerGeneration(loopIdVal = '1') {
+    await renderPage(loopIdVal)
+    const loopInput = screen.getByRole('spinbutton', { name: /Loop ID/i })
+    await act(async () => {
+      fireEvent.change(loopInput, { target: { value: loopIdVal } })
+    })
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /Generate Arrangement/i }))
+    })
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+  }
+
+  it('emits GENERATE_STARTED log when Generate is clicked', async () => {
+    ;(renderLoopAsync as jest.Mock).mockResolvedValue({ job_id: 'job-gs' })
+    ;(getJobStatus as jest.Mock).mockResolvedValue({ status: 'finished', arrangement_id: 42 })
+    ;(getArrangementStatus as jest.Mock).mockResolvedValue(makeArrangementStatus({ id: 42 }))
+    ;(listArrangements as jest.Mock).mockResolvedValue([makeArrangement({ id: 42 })])
+
+    await triggerGeneration()
+
+    await waitFor(() => {
+      expect(console.log).toHaveBeenCalledWith(
+        'GENERATE_STARTED',
+        expect.objectContaining({ loopId: '1' })
+      )
+    })
+  })
+
+  it('emits RENDER_ASYNC_RESPONSE_FULL log after renderLoopAsync resolves', async () => {
+    const mockResponse = { job_id: 'job-rarf' }
+    ;(renderLoopAsync as jest.Mock).mockResolvedValue(mockResponse)
+    ;(getJobStatus as jest.Mock).mockResolvedValue({ status: 'finished', arrangement_id: 42 })
+    ;(getArrangementStatus as jest.Mock).mockResolvedValue(makeArrangementStatus({ id: 42 }))
+    ;(listArrangements as jest.Mock).mockResolvedValue([makeArrangement({ id: 42 })])
+
+    await triggerGeneration()
+
+    await waitFor(() => {
+      expect(console.log).toHaveBeenCalledWith(
+        'RENDER_ASYNC_RESPONSE_FULL',
+        expect.objectContaining({ job_id: 'job-rarf' })
+      )
+    })
+  })
+
+  it('emits JOB_TERMINAL_SUCCESS log on job success', async () => {
+    ;(renderLoopAsync as jest.Mock).mockResolvedValue({ job_id: 'job-jts' })
+    ;(getJobStatus as jest.Mock).mockResolvedValue({ status: 'finished', arrangement_id: 42 })
+    ;(getArrangementStatus as jest.Mock).mockResolvedValue(makeArrangementStatus({ id: 42 }))
+    ;(listArrangements as jest.Mock).mockResolvedValue([makeArrangement({ id: 42 })])
+
+    await triggerGeneration()
+
+    await waitFor(() => {
+      expect(console.log).toHaveBeenCalledWith(
+        'JOB_TERMINAL_SUCCESS',
+        expect.objectContaining({ status: 'finished' })
+      )
+    })
+  })
+
+  it('emits FINAL_ARRANGEMENT_ID log with the resolved arrangement id', async () => {
+    ;(renderLoopAsync as jest.Mock).mockResolvedValue({ job_id: 'job-fai' })
+    ;(getJobStatus as jest.Mock).mockResolvedValue({ status: 'finished', arrangement_id: 42 })
+    ;(getArrangementStatus as jest.Mock).mockResolvedValue(makeArrangementStatus({ id: 42 }))
+    ;(listArrangements as jest.Mock).mockResolvedValue([makeArrangement({ id: 42 })])
+
+    await triggerGeneration()
+
+    await waitFor(() => {
+      expect(console.log).toHaveBeenCalledWith('FINAL_ARRANGEMENT_ID', 42)
+    })
+  })
+
+  it('emits ARRANGEMENT_FETCHED_BY_ID log after fetching arrangement by id', async () => {
+    const mockStatus = makeArrangementStatus({ id: 42 })
+    ;(renderLoopAsync as jest.Mock).mockResolvedValue({ job_id: 'job-afbi' })
+    ;(getJobStatus as jest.Mock).mockResolvedValue({ status: 'finished', arrangement_id: 42 })
+    ;(getArrangementStatus as jest.Mock).mockResolvedValue(mockStatus)
+    ;(listArrangements as jest.Mock).mockResolvedValue([makeArrangement({ id: 42 })])
+
+    await triggerGeneration()
+
+    await waitFor(() => {
+      expect(console.log).toHaveBeenCalledWith(
+        'ARRANGEMENT_FETCHED_BY_ID',
+        expect.objectContaining({ id: 42 })
+      )
+    })
+  })
+
+  it('emits GENERATE_UI_COMPLETE log after results are displayed', async () => {
+    ;(renderLoopAsync as jest.Mock).mockResolvedValue({ job_id: 'job-guc' })
+    ;(getJobStatus as jest.Mock).mockResolvedValue({ status: 'finished', arrangement_id: 42 })
+    ;(getArrangementStatus as jest.Mock).mockResolvedValue(makeArrangementStatus({ id: 42 }))
+    ;(listArrangements as jest.Mock).mockResolvedValue([makeArrangement({ id: 42 })])
+
+    await triggerGeneration()
+
+    await waitFor(() => {
+      expect(console.log).toHaveBeenCalledWith('GENERATE_UI_COMPLETE')
+    })
+  })
+})
+

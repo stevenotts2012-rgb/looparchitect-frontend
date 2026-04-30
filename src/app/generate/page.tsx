@@ -609,8 +609,9 @@ export default function GeneratePage() {
         const effectiveTerminalState: string | null = job.job_terminal_state ?? job.terminal_state ?? null
 
         const SUCCESS_STATUSES = new Set(['success', 'finished', 'completed', 'done'])
+        const FAILED_STATUSES = new Set(['failed', 'error', 'cancelled'])
         const isSuccessStatus = SUCCESS_STATUSES.has(effectiveStatus) || effectiveTerminalState === 'success'
-        const isFailedStatus = effectiveStatus === 'failed' || effectiveTerminalState === 'failed'
+        const isFailedStatus = FAILED_STATUSES.has(effectiveStatus) || FAILED_STATUSES.has(effectiveTerminalState ?? '')
 
         console.log("JOB_TERMINAL_FLAGS", {
           status: job.status,
@@ -639,6 +640,7 @@ export default function GeneratePage() {
           setIsGenerating(false)
           console.log("SUCCESS_TRIGGERED")
           console.log('JOB_SUCCESS_STATUS_RECEIVED', job)
+          console.log("JOB_TERMINAL_SUCCESS", job)
           console.log('JOB_SUCCESS_DETECTED', { job_id: currentJobId, effectiveStatus, effectiveTerminalState })
 
           console.log("JOB COMPLETED", job)
@@ -663,6 +665,7 @@ export default function GeneratePage() {
             console.log("ARRANGEMENT_ID", job.arrangement_id)
             console.log('JOB_COMPLETED_WITH_ARRANGEMENT_ID', effectiveArrangementId)
             console.log('AUTO_SELECT_ARRANGEMENT', effectiveArrangementId)
+            console.log("FINAL_ARRANGEMENT_ID", effectiveArrangementId)
 
             // Immediately fetch arrangement by ID so the player/results area
             // renders without waiting for history polling.
@@ -671,6 +674,7 @@ export default function GeneratePage() {
             try {
               autoStatus = await getArrangementStatus(effectiveArrangementId)
               console.log("ARRANGEMENT_RESPONSE", autoStatus)
+              console.log("ARRANGEMENT_FETCHED_BY_ID", autoStatus)
             } catch (statusErr) {
               console.warn('[LoopArchitect] Failed to fetch arrangement status on job completion:', statusErr)
             }
@@ -702,6 +706,7 @@ export default function GeneratePage() {
             setSelectedPreviewId(effectiveArrangementId)
             setArrangementId(effectiveArrangementId)
             console.log('generated_results_displayed', { arrangement_id: effectiveArrangementId, candidate_count: 1 })
+            console.log("GENERATE_UI_COMPLETE")
             if (job.structure_preview) {
               setStructurePreview(job.structure_preview)
             }
@@ -819,7 +824,25 @@ export default function GeneratePage() {
     // concurrent-poll race condition (isPolling guards any overlap).
     pollJob()
 
+    // 90-second safety timeout: if the job has not reached a terminal state
+    // within 90 s, stop polling and unblock the UI so it never stays stuck
+    // on "Generating..." indefinitely.
+    const JOB_TIMEOUT_MS = 90_000
+    const timeoutId = setTimeout(() => {
+      // Guard: only apply the timeout if polling is still active.
+      // The success/failure paths in pollJob clear jobPollingIntervalRef before
+      // calling setCurrentJobId(null), so a stale timeout that fires after the
+      // job has already completed will find a null ref and bail out safely.
+      if (!jobPollingIntervalRef.current) return
+      clearInterval(jobPollingIntervalRef.current)
+      jobPollingIntervalRef.current = null
+      setCurrentJobId(null)
+      setIsGenerating(false)
+      setError('Generation timed out after 90 seconds. Please try again.')
+    }, JOB_TIMEOUT_MS)
+
     return () => {
+      clearTimeout(timeoutId)
       if (jobPollingIntervalRef.current) {
         clearInterval(jobPollingIntervalRef.current)
         jobPollingIntervalRef.current = null
@@ -1230,9 +1253,11 @@ export default function GeneratePage() {
       }
 
       // Dispatch async render job – the job-polling useEffect takes over from here.
+      console.log("GENERATE_STARTED", { loopId, options })
       console.log('render_async_started', { loop_id: loopIdNum })
       const renderResponse = await renderLoopAsync(loopIdNum, options)
       console.log('RENDER_ASYNC_RESPONSE', renderResponse)
+      console.log("RENDER_ASYNC_RESPONSE_FULL", renderResponse)
       console.log('job_id_received', { job_id: renderResponse.job_id, loop_id: loopIdNum })
       setCurrentJobId(renderResponse.job_id)
       jobDispatched = true
