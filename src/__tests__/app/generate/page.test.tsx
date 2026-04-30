@@ -199,6 +199,13 @@ import GeneratePage from '@/app/generate/page'
 // Helpers
 // ---------------------------------------------------------------------------
 
+/** Flush the microtask queue (Promise resolutions) without advancing fake timers. */
+const flushPromises = () => act(async () => {
+  await Promise.resolve()
+  await Promise.resolve()
+  await Promise.resolve()
+})
+
 function makeArrangementStatus(overrides: Partial<ArrangementStatusResponse> = {}): ArrangementStatusResponse {
   return {
     id: 42,
@@ -1236,5 +1243,571 @@ describe('Required console.log identifiers', () => {
       expect(console.log).toHaveBeenCalledWith('GENERATE_UI_COMPLETE')
     })
   })
+
+  it('emits RAW_JOB_RESPONSE log for each poll tick', async () => {
+    const mockJob = { status: 'finished', arrangement_id: 42 }
+    ;(renderLoopAsync as jest.Mock).mockResolvedValue({ job_id: 'job-raw' })
+    ;(getJobStatus as jest.Mock).mockResolvedValue(mockJob)
+    ;(getArrangementStatus as jest.Mock).mockResolvedValue(makeArrangementStatus({ id: 42 }))
+    ;(listArrangements as jest.Mock).mockResolvedValue([makeArrangement({ id: 42 })])
+
+    await triggerGeneration()
+
+    await waitFor(() => {
+      expect(console.log).toHaveBeenCalledWith('RAW_JOB_RESPONSE', expect.objectContaining({ status: 'finished' }))
+    })
+  })
 })
 
+// ===========================================================================
+// Tests: "cancelled" status as failure
+// ===========================================================================
+
+describe('"cancelled" job status treated as failure', () => {
+  it('shows error and re-enables Generate button when job is cancelled', async () => {
+    ;(renderLoopAsync as jest.Mock).mockResolvedValue({ job_id: 'job-cancelled' })
+    ;(getJobStatus as jest.Mock).mockResolvedValue({
+      status: 'cancelled',
+      error_message: 'Job was cancelled',
+    })
+
+    await renderPage('1')
+
+    const loopInput = screen.getByRole('spinbutton', { name: /Loop ID/i })
+    await act(async () => {
+      fireEvent.change(loopInput, { target: { value: '1' } })
+    })
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /Generate Arrangement/i }))
+    })
+    await flushPromises()
+
+    await waitFor(() => {
+      expect(screen.getByText(/Job was cancelled/i)).toBeInTheDocument()
+    })
+    const generateBtn = screen.getByRole('button', { name: /Generate Arrangement/i })
+    expect(generateBtn).not.toBeDisabled()
+  })
+
+  it('does not call getArrangementStatus when job is cancelled', async () => {
+    ;(renderLoopAsync as jest.Mock).mockResolvedValue({ job_id: 'job-cancelled-2' })
+    ;(getJobStatus as jest.Mock).mockResolvedValue({
+      status: 'cancelled',
+    })
+
+    await renderPage('1')
+
+    const loopInput = screen.getByRole('spinbutton', { name: /Loop ID/i })
+    await act(async () => {
+      fireEvent.change(loopInput, { target: { value: '1' } })
+    })
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /Generate Arrangement/i }))
+    })
+    await flushPromises()
+
+    await waitFor(() => {
+      expect(screen.getByText(/Render job failed/i)).toBeInTheDocument()
+    })
+    expect(getArrangementStatus).not.toHaveBeenCalled()
+  })
+})
+
+// ===========================================================================
+// Tests: Alternative job status field names (job.state, job.job_status)
+// ===========================================================================
+
+describe('Alternative job status field names', () => {
+  it('treats job.state="finished" as success when job.status is absent', async () => {
+    ;(renderLoopAsync as jest.Mock).mockResolvedValue({ job_id: 'job-state' })
+    ;(getJobStatus as jest.Mock).mockResolvedValue({
+      state: 'finished',
+      arrangement_id: 50,
+    })
+    ;(getArrangementStatus as jest.Mock).mockResolvedValue(makeArrangementStatus({ id: 50 }))
+    ;(listArrangements as jest.Mock).mockResolvedValue([makeArrangement({ id: 50 })])
+
+    await renderPage('1')
+
+    const loopInput = screen.getByRole('spinbutton', { name: /Loop ID/i })
+    await act(async () => {
+      fireEvent.change(loopInput, { target: { value: '1' } })
+    })
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /Generate Arrangement/i }))
+    })
+    await flushPromises()
+
+    await waitFor(() => {
+      expect(getArrangementStatus).toHaveBeenCalledWith(50)
+    })
+  })
+
+  it('treats job.job_status="done" as success when status and state are absent', async () => {
+    ;(renderLoopAsync as jest.Mock).mockResolvedValue({ job_id: 'job-job-status' })
+    ;(getJobStatus as jest.Mock).mockResolvedValue({
+      job_status: 'done',
+      arrangement_id: 51,
+    })
+    ;(getArrangementStatus as jest.Mock).mockResolvedValue(makeArrangementStatus({ id: 51 }))
+    ;(listArrangements as jest.Mock).mockResolvedValue([makeArrangement({ id: 51 })])
+
+    await renderPage('1')
+
+    const loopInput = screen.getByRole('spinbutton', { name: /Loop ID/i })
+    await act(async () => {
+      fireEvent.change(loopInput, { target: { value: '1' } })
+    })
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /Generate Arrangement/i }))
+    })
+    await flushPromises()
+
+    await waitFor(() => {
+      expect(getArrangementStatus).toHaveBeenCalledWith(51)
+    })
+  })
+
+  it('treats job.terminal_state="success" as success (alternative to job_terminal_state)', async () => {
+    ;(renderLoopAsync as jest.Mock).mockResolvedValue({ job_id: 'job-terminal-state' })
+    ;(getJobStatus as jest.Mock).mockResolvedValue({
+      status: 'processing',
+      terminal_state: 'success',
+      arrangement_id: 52,
+    })
+    ;(getArrangementStatus as jest.Mock).mockResolvedValue(makeArrangementStatus({ id: 52 }))
+    ;(listArrangements as jest.Mock).mockResolvedValue([makeArrangement({ id: 52 })])
+
+    await renderPage('1')
+
+    const loopInput = screen.getByRole('spinbutton', { name: /Loop ID/i })
+    await act(async () => {
+      fireEvent.change(loopInput, { target: { value: '1' } })
+    })
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /Generate Arrangement/i }))
+    })
+    await flushPromises()
+
+    await waitFor(() => {
+      expect(getArrangementStatus).toHaveBeenCalledWith(52)
+    })
+  })
+})
+
+// ===========================================================================
+// Tests: Nested arrangement_id resolution
+// ===========================================================================
+
+describe('Nested arrangement_id resolution', () => {
+  it('extracts arrangement_id from job.arrangementId (camelCase)', async () => {
+    ;(renderLoopAsync as jest.Mock).mockResolvedValue({ job_id: 'job-camel' })
+    ;(getJobStatus as jest.Mock).mockResolvedValue({
+      status: 'finished',
+      arrangementId: 60,
+    })
+    ;(getArrangementStatus as jest.Mock).mockResolvedValue(makeArrangementStatus({ id: 60 }))
+    ;(listArrangements as jest.Mock).mockResolvedValue([makeArrangement({ id: 60 })])
+
+    await renderPage('1')
+
+    const loopInput = screen.getByRole('spinbutton', { name: /Loop ID/i })
+    await act(async () => {
+      fireEvent.change(loopInput, { target: { value: '1' } })
+    })
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /Generate Arrangement/i }))
+    })
+    await flushPromises()
+
+    await waitFor(() => {
+      expect(getArrangementStatus).toHaveBeenCalledWith(60)
+    })
+  })
+
+  it('extracts arrangement_id from job.result.arrangement_id', async () => {
+    ;(renderLoopAsync as jest.Mock).mockResolvedValue({ job_id: 'job-result' })
+    ;(getJobStatus as jest.Mock).mockResolvedValue({
+      status: 'finished',
+      result: { arrangement_id: 61 },
+    })
+    ;(getArrangementStatus as jest.Mock).mockResolvedValue(makeArrangementStatus({ id: 61 }))
+    ;(listArrangements as jest.Mock).mockResolvedValue([makeArrangement({ id: 61 })])
+
+    await renderPage('1')
+
+    const loopInput = screen.getByRole('spinbutton', { name: /Loop ID/i })
+    await act(async () => {
+      fireEvent.change(loopInput, { target: { value: '1' } })
+    })
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /Generate Arrangement/i }))
+    })
+    await flushPromises()
+
+    await waitFor(() => {
+      expect(getArrangementStatus).toHaveBeenCalledWith(61)
+    })
+  })
+
+  it('extracts arrangement_id from job.metadata.arrangement_id', async () => {
+    ;(renderLoopAsync as jest.Mock).mockResolvedValue({ job_id: 'job-metadata' })
+    ;(getJobStatus as jest.Mock).mockResolvedValue({
+      status: 'finished',
+      metadata: { arrangement_id: 62 },
+    })
+    ;(getArrangementStatus as jest.Mock).mockResolvedValue(makeArrangementStatus({ id: 62 }))
+    ;(listArrangements as jest.Mock).mockResolvedValue([makeArrangement({ id: 62 })])
+
+    await renderPage('1')
+
+    const loopInput = screen.getByRole('spinbutton', { name: /Loop ID/i })
+    await act(async () => {
+      fireEvent.change(loopInput, { target: { value: '1' } })
+    })
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /Generate Arrangement/i }))
+    })
+    await flushPromises()
+
+    await waitFor(() => {
+      expect(getArrangementStatus).toHaveBeenCalledWith(62)
+    })
+  })
+
+  it('emits FINAL_ARRANGEMENT_ID with id from job.result.arrangement_id', async () => {
+    ;(renderLoopAsync as jest.Mock).mockResolvedValue({ job_id: 'job-result-fai' })
+    ;(getJobStatus as jest.Mock).mockResolvedValue({
+      status: 'finished',
+      result: { arrangement_id: 63 },
+    })
+    ;(getArrangementStatus as jest.Mock).mockResolvedValue(makeArrangementStatus({ id: 63 }))
+    ;(listArrangements as jest.Mock).mockResolvedValue([makeArrangement({ id: 63 })])
+
+    await renderPage('1')
+
+    const loopInput = screen.getByRole('spinbutton', { name: /Loop ID/i })
+    await act(async () => {
+      fireEvent.change(loopInput, { target: { value: '1' } })
+    })
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /Generate Arrangement/i }))
+    })
+    await flushPromises()
+
+    await waitFor(() => {
+      expect(console.log).toHaveBeenCalledWith('FINAL_ARRANGEMENT_ID', 63)
+    })
+  })
+})
+
+// ===========================================================================
+// Tests: renderLoopAsync failure handling
+// ===========================================================================
+
+describe('renderLoopAsync failure handling', () => {
+  it('shows API error message when renderLoopAsync throws LoopArchitectApiError', async () => {
+    const { LoopArchitectApiError } = jest.requireMock('@/../../api/client')
+    ;(renderLoopAsync as jest.Mock).mockRejectedValue(
+      new LoopArchitectApiError('Loop file not found', 404)
+    )
+
+    await renderPage('1')
+
+    const loopInput = screen.getByRole('spinbutton', { name: /Loop ID/i })
+    await act(async () => {
+      fireEvent.change(loopInput, { target: { value: '1' } })
+    })
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /Generate Arrangement/i }))
+    })
+    await flushPromises()
+
+    await waitFor(() => {
+      expect(screen.getByText(/Loop file not found/i)).toBeInTheDocument()
+    })
+    // isGenerating must be cleared so the button is re-enabled
+    const generateBtn = screen.getByRole('button', { name: /Generate Arrangement/i })
+    expect(generateBtn).not.toBeDisabled()
+  })
+
+  it('shows generic error when renderLoopAsync throws a non-API error', async () => {
+    ;(renderLoopAsync as jest.Mock).mockRejectedValue(new Error('Network failure'))
+
+    await renderPage('1')
+
+    const loopInput = screen.getByRole('spinbutton', { name: /Loop ID/i })
+    await act(async () => {
+      fireEvent.change(loopInput, { target: { value: '1' } })
+    })
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /Generate Arrangement/i }))
+    })
+    await flushPromises()
+
+    await waitFor(() => {
+      expect(screen.getByText(/Failed to generate arrangement/i)).toBeInTheDocument()
+    })
+    const generateBtn = screen.getByRole('button', { name: /Generate Arrangement/i })
+    expect(generateBtn).not.toBeDisabled()
+  })
+
+  it('does not call getJobStatus when renderLoopAsync fails', async () => {
+    ;(renderLoopAsync as jest.Mock).mockRejectedValue(new Error('Server error'))
+
+    await renderPage('1')
+
+    const loopInput = screen.getByRole('spinbutton', { name: /Loop ID/i })
+    await act(async () => {
+      fireEvent.change(loopInput, { target: { value: '1' } })
+    })
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /Generate Arrangement/i }))
+    })
+    await flushPromises()
+
+    expect(getJobStatus).not.toHaveBeenCalled()
+  })
+})
+
+// ===========================================================================
+// Tests: Job polling error accumulation
+// ===========================================================================
+
+describe('Job polling error accumulation', () => {
+  it('stops polling and shows error after 5 consecutive getJobStatus failures', async () => {
+    ;(renderLoopAsync as jest.Mock).mockResolvedValue({ job_id: 'job-err-count' })
+    ;(getJobStatus as jest.Mock).mockRejectedValue(new Error('Network error'))
+
+    await renderPage('1')
+
+    const loopInput = screen.getByRole('spinbutton', { name: /Loop ID/i })
+    await act(async () => {
+      fireEvent.change(loopInput, { target: { value: '1' } })
+    })
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /Generate Arrangement/i }))
+    })
+
+    // Drain the initial poll
+    await flushPromises()
+
+    // Advance timer to fire 4 more poll intervals (5 total failures)
+    for (let i = 0; i < 4; i++) {
+      await act(async () => {
+        jest.advanceTimersByTime(3000)
+        await Promise.resolve()
+        await Promise.resolve()
+      })
+    }
+
+    await waitFor(() => {
+      expect(screen.getByText(/Connection issue while checking render status/i)).toBeInTheDocument()
+    })
+    const generateBtn = screen.getByRole('button', { name: /Generate Arrangement/i })
+    expect(generateBtn).not.toBeDisabled()
+  })
+})
+
+// ===========================================================================
+// Tests: Audio URL from job.audio_url field
+// ===========================================================================
+
+describe('Audio URL from job.audio_url', () => {
+  it('sets audio URL from job.audio_url when arrangement status has no direct URL', async () => {
+    ;(renderLoopAsync as jest.Mock).mockResolvedValue({ job_id: 'job-audio-url' })
+    ;(getJobStatus as jest.Mock).mockResolvedValue({
+      status: 'finished',
+      arrangement_id: 70,
+      audio_url: 'https://cdn.example.com/job-audio.wav',
+    })
+    ;(getArrangementStatus as jest.Mock).mockResolvedValue(
+      makeArrangementStatus({ id: 70, output_url: undefined })
+    )
+    ;(resolveArrangementAudioUrl as jest.Mock).mockReturnValue(null)
+    ;(listArrangements as jest.Mock).mockResolvedValue([makeArrangement({ id: 70 })])
+
+    await renderPage('1')
+
+    const loopInput = screen.getByRole('spinbutton', { name: /Loop ID/i })
+    await act(async () => {
+      fireEvent.change(loopInput, { target: { value: '1' } })
+    })
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /Generate Arrangement/i }))
+    })
+    await flushPromises()
+
+    await waitFor(() => {
+      expect(console.log).toHaveBeenCalledWith(
+        'AUTO_LOAD_TRACK_URL',
+        'https://cdn.example.com/job-audio.wav'
+      )
+    })
+  })
+})
+
+// ===========================================================================
+// Tests: isGenerating guard prevents double-click
+// ===========================================================================
+
+describe('isGenerating guard prevents double-click', () => {
+  it('does not call renderLoopAsync a second time when already generating', async () => {
+    // renderLoopAsync resolves immediately (sets currentJobId); getJobStatus never
+    // resolves so isGenerating stays true and the form stays visible (disabled).
+    ;(renderLoopAsync as jest.Mock).mockResolvedValue({ job_id: 'job-guard' })
+    ;(getJobStatus as jest.Mock).mockReturnValue(new Promise<never>(() => {}))
+
+    await renderPage('1')
+
+    const loopInput = screen.getByRole('spinbutton', { name: /Loop ID/i })
+    await act(async () => {
+      fireEvent.change(loopInput, { target: { value: '1' } })
+    })
+
+    // First click – starts generation and resolves all mocks through to renderLoopAsync
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /Generate Arrangement/i }))
+      await Promise.resolve()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    // isGenerating=true: button now reads "Generating..." and is disabled
+    await waitFor(() => {
+      expect(screen.getByText(/Generating\.\.\./i)).toBeInTheDocument()
+    })
+    // The button is disabled while generating
+    const generatingBtn = screen.getByRole('button', { name: /Generating/i })
+    expect(generatingBtn).toBeDisabled()
+
+    // Second click on the disabled button is a no-op
+    await act(async () => {
+      fireEvent.click(generatingBtn)
+      await Promise.resolve()
+    })
+
+    // renderLoopAsync must have been called exactly once
+    expect(renderLoopAsync).toHaveBeenCalledTimes(1)
+  })
+})
+
+// ===========================================================================
+// Tests: setArrangementId set correctly in both paths
+// ===========================================================================
+
+describe('setArrangementId set correctly in both paths', () => {
+  it('sets arrangementId to the direct arrangement_id from job', async () => {
+    ;(renderLoopAsync as jest.Mock).mockResolvedValue({ job_id: 'job-arr-id-direct' })
+    ;(getJobStatus as jest.Mock).mockResolvedValue({ status: 'finished', arrangement_id: 80 })
+    ;(getArrangementStatus as jest.Mock).mockResolvedValue(makeArrangementStatus({ id: 80 }))
+    ;(listArrangements as jest.Mock).mockResolvedValue([makeArrangement({ id: 80 })])
+
+    await renderPage('1')
+
+    const loopInput = screen.getByRole('spinbutton', { name: /Loop ID/i })
+    await act(async () => {
+      fireEvent.change(loopInput, { target: { value: '1' } })
+    })
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /Generate Arrangement/i }))
+    })
+    await flushPromises()
+
+    // Download button appears with the correct arrangement id
+    await waitFor(() => {
+      expect(screen.getByTestId('download-btn')).toBeInTheDocument()
+    })
+    expect(screen.getByTestId('download-btn')).toHaveTextContent('80')
+  })
+
+  it('sets arrangementId to the newest arrangement id in the fallback path', async () => {
+    ;(renderLoopAsync as jest.Mock).mockResolvedValue({ job_id: 'job-arr-id-fallback' })
+    ;(getJobStatus as jest.Mock).mockResolvedValue({
+      status: 'finished',
+      arrangement_id: undefined,
+    })
+    ;(listArrangements as jest.Mock).mockResolvedValue([
+      makeArrangement({ id: 81, created_at: '2024-01-10T00:00:00Z' }),
+      makeArrangement({ id: 85, created_at: '2024-01-20T00:00:00Z' }),
+    ])
+    ;(getArrangementStatus as jest.Mock).mockResolvedValue(makeArrangementStatus({ id: 85 }))
+
+    await renderPage('1')
+
+    const loopInput = screen.getByRole('spinbutton', { name: /Loop ID/i })
+    await act(async () => {
+      fireEvent.change(loopInput, { target: { value: '1' } })
+    })
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /Generate Arrangement/i }))
+    })
+    await flushPromises()
+
+    await waitFor(() => {
+      expect(screen.getByTestId('download-btn')).toBeInTheDocument()
+    })
+    expect(screen.getByTestId('download-btn')).toHaveTextContent('85')
+  })
+})
+
+// ===========================================================================
+// Tests: isGenerating resets to false on ALL terminal job states
+// ===========================================================================
+
+describe('isGenerating resets to false on ALL terminal job states', () => {
+  const terminalSuccessStatuses = ['success', 'finished', 'completed', 'done']
+  terminalSuccessStatuses.forEach((status) => {
+    it(`resets isGenerating when job status is "${status}"`, async () => {
+      ;(renderLoopAsync as jest.Mock).mockResolvedValue({ job_id: `job-${status}` })
+      ;(getJobStatus as jest.Mock).mockResolvedValue({ status, arrangement_id: 42 })
+      ;(getArrangementStatus as jest.Mock).mockResolvedValue(makeArrangementStatus())
+      ;(listArrangements as jest.Mock).mockResolvedValue([makeArrangement()])
+
+      await renderPage('1')
+
+      const loopInput = screen.getByRole('spinbutton', { name: /Loop ID/i })
+      await act(async () => {
+        fireEvent.change(loopInput, { target: { value: '1' } })
+      })
+      await act(async () => {
+        fireEvent.click(screen.getByRole('button', { name: /Generate Arrangement/i }))
+      })
+      await flushPromises()
+
+      // After successful generation, the generate form is replaced by Preview Variations.
+      // The "Generate 3 New Variations" button in that section must not be disabled
+      // (isGenerating=false), proving the stuck-generating bug is fixed.
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /Generate 3 New Variations/i })).not.toBeDisabled()
+      })
+    })
+  })
+
+  const terminalFailureStatuses = ['failed', 'error', 'cancelled']
+  terminalFailureStatuses.forEach((status) => {
+    it(`resets isGenerating when job status is "${status}"`, async () => {
+      ;(renderLoopAsync as jest.Mock).mockResolvedValue({ job_id: `job-${status}` })
+      ;(getJobStatus as jest.Mock).mockResolvedValue({
+        status,
+        error_message: `Job ended with status ${status}`,
+      })
+
+      await renderPage('1')
+
+      const loopInput = screen.getByRole('spinbutton', { name: /Loop ID/i })
+      await act(async () => {
+        fireEvent.change(loopInput, { target: { value: '1' } })
+      })
+      await act(async () => {
+        fireEvent.click(screen.getByRole('button', { name: /Generate Arrangement/i }))
+      })
+      await flushPromises()
+
+      await waitFor(() => {
+        const btn = screen.getByRole('button', { name: /Generate Arrangement/i })
+        expect(btn).not.toBeDisabled()
+      })
+    })
+  })
+})
