@@ -633,6 +633,8 @@ export default function GeneratePage() {
             jobPollingIntervalRef.current = null
           }
           setCurrentJobId(null)
+          console.log("SUCCESS_TRIGGERED")
+          console.log('JOB_SUCCESS_STATUS_RECEIVED', job)
           console.log('JOB_SUCCESS_DETECTED', { job_id: currentJobId, effectiveStatus, effectiveTerminalState })
 
           console.log("JOB COMPLETED", job)
@@ -654,6 +656,7 @@ export default function GeneratePage() {
           // when present – avoids false "no arrangement" errors caused by stale state
           // or a slow arrangements endpoint response.
           if (effectiveArrangementId) {
+            console.log("ARRANGEMENT_ID", job.arrangement_id)
             console.log('JOB_COMPLETED_WITH_ARRANGEMENT_ID', effectiveArrangementId)
             console.log('AUTO_SELECT_ARRANGEMENT', effectiveArrangementId)
 
@@ -662,6 +665,7 @@ export default function GeneratePage() {
             let autoStatus: ArrangementStatusResponse | null = null
             try {
               autoStatus = await getArrangementStatus(effectiveArrangementId)
+              console.log("ARRANGEMENT_FETCHED", autoStatus)
             } catch (statusErr) {
               console.warn('[LoopArchitect] Failed to fetch arrangement status on job completion:', statusErr)
             }
@@ -696,10 +700,10 @@ export default function GeneratePage() {
             if (job.structure_preview) {
               setStructurePreview(job.structure_preview)
             }
-            const loopIdNumEarly = loopId ? parseInt(loopId, 10) : undefined
-            await loadHistory(loopIdNumEarly && !Number.isNaN(loopIdNumEarly) ? loopIdNumEarly : undefined)
             setError(null)
             setIsGenerating(false)
+            const loopIdNumEarly = loopId ? parseInt(loopId, 10) : undefined
+            await loadHistory(loopIdNumEarly && !Number.isNaN(loopIdNumEarly) ? loopIdNumEarly : undefined)
             return
           }
 
@@ -782,9 +786,9 @@ export default function GeneratePage() {
             setStructurePreview(job.structure_preview)
           }
 
+          setIsGenerating(false)
           const loopIdNum = loopId ? parseInt(loopId, 10) : undefined
           await loadHistory(loopIdNum && !Number.isNaN(loopIdNum) ? loopIdNum : undefined)
-          setIsGenerating(false)
         } else if (isFailedStatus) {
           if (jobPollingIntervalRef.current) {
             clearInterval(jobPollingIntervalRef.current)
