@@ -660,12 +660,13 @@ export default function GeneratePage() {
             console.log('JOB_COMPLETED_WITH_ARRANGEMENT_ID', effectiveArrangementId)
             console.log('AUTO_SELECT_ARRANGEMENT', effectiveArrangementId)
 
-            // Immediately fetch arrangement status so the player/results area
-            // renders without waiting for the next candidates-polling tick.
+            // Immediately fetch arrangement by ID so the player/results area
+            // renders without waiting for history polling.
+            console.log("FETCHING_ARRANGEMENT_BY_ID", effectiveArrangementId)
             let autoStatus: ArrangementStatusResponse | null = null
             try {
               autoStatus = await getArrangementStatus(effectiveArrangementId)
-              console.log("ARRANGEMENT_FETCHED", autoStatus)
+              console.log("ARRANGEMENT_RESPONSE", autoStatus)
             } catch (statusErr) {
               console.warn('[LoopArchitect] Failed to fetch arrangement status on job completion:', statusErr)
             }
@@ -702,8 +703,6 @@ export default function GeneratePage() {
             }
             setError(null)
             setIsGenerating(false)
-            const loopIdNumEarly = loopId ? parseInt(loopId, 10) : undefined
-            await loadHistory(loopIdNumEarly && !Number.isNaN(loopIdNumEarly) ? loopIdNumEarly : undefined)
             return
           }
 
@@ -787,8 +786,6 @@ export default function GeneratePage() {
           }
 
           setIsGenerating(false)
-          const loopIdNum = loopId ? parseInt(loopId, 10) : undefined
-          await loadHistory(loopIdNum && !Number.isNaN(loopIdNum) ? loopIdNum : undefined)
         } else if (isFailedStatus) {
           if (jobPollingIntervalRef.current) {
             clearInterval(jobPollingIntervalRef.current)
