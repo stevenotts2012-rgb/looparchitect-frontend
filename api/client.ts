@@ -1098,6 +1098,8 @@ export interface JobStatusResponse {
   audio_url?: string | null;
   preview_url?: string | null;
   arrangement_id?: number | null;
+  /** camelCase variant of arrangement_id used by some backend versions. */
+  arrangementId?: number | null;
   /** Nested result object – some backend versions embed arrangement_id here. */
   result?: { arrangement_id?: number | null; [key: string]: unknown } | null;
   /** Nested metadata object – some backend versions embed arrangement_id here. */
@@ -1180,6 +1182,7 @@ export async function renderLoopAsync(
     });
 
     const payload = await handleResponse<RenderAsyncResponse>(response);
+    console.log("RENDER_ASYNC_RESPONSE_FULL", payload);
     console.info('feature_event', {
       event: 'render_async_dispatched',
       correlation_id: correlationId,

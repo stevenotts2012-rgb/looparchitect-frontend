@@ -601,6 +601,7 @@ export default function GeneratePage() {
         // Resolve arrangement_id from the top-level field or nested result/metadata.
         const effectiveArrangementId: number | null =
           job.arrangement_id ??
+          job.arrangementId ??
           job.result?.arrangement_id ??
           job.metadata?.arrangement_id ??
           null
@@ -633,6 +634,9 @@ export default function GeneratePage() {
             jobPollingIntervalRef.current = null
           }
           setCurrentJobId(null)
+          // Immediately unblock the Generate button – never leave isGenerating true
+          // after a terminal success, even if subsequent async fetches are slow.
+          setIsGenerating(false)
           console.log("SUCCESS_TRIGGERED")
           console.log('JOB_SUCCESS_STATUS_RECEIVED', job)
           console.log('JOB_SUCCESS_DETECTED', { job_id: currentJobId, effectiveStatus, effectiveTerminalState })
@@ -702,7 +706,6 @@ export default function GeneratePage() {
               setStructurePreview(job.structure_preview)
             }
             setError(null)
-            setIsGenerating(false)
             return
           }
 
@@ -784,8 +787,6 @@ export default function GeneratePage() {
           if (job.structure_preview) {
             setStructurePreview(job.structure_preview)
           }
-
-          setIsGenerating(false)
         } else if (isFailedStatus) {
           if (jobPollingIntervalRef.current) {
             clearInterval(jobPollingIntervalRef.current)
