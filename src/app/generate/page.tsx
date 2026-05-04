@@ -152,6 +152,13 @@ export default function GeneratePage() {
   // Tracks how many times we have attempted to download the main arrangement audio
   // (standalone flow, no candidates).  Reset when arrangementId changes.
   const audioDownloadAttemptsRef = useRef<number>(0)
+  // Arrangement-polling refs (emergency fix – parallel completion path).
+  const arrangementPollingIntervalRef = useRef<NodeJS.Timeout | null>(null)
+  const arrangementPollingTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+  // Set to true the moment either the job-polling or the arrangement-polling
+  // path transitions the UI out of "generating" state.  Prevents timeout
+  // handlers from surfacing stale errors after a successful completion.
+  const generationCompletedRef = useRef(false)
 
   const clearPreviewCandidates = () => {
     setPreviewCandidates((current) => {
@@ -638,6 +645,7 @@ export default function GeneratePage() {
           setCurrentJobId(null)
           // Immediately unblock the Generate button – never leave isGenerating true
           // after a terminal success, even if subsequent async fetches are slow.
+          generationCompletedRef.current = true
           setIsGenerating(false)
           console.log("SUCCESS_TRIGGERED")
           console.log('JOB_SUCCESS_STATUS_RECEIVED', job)
@@ -800,6 +808,7 @@ export default function GeneratePage() {
           }
           setCurrentJobId(null)
           setError(job.error_message || 'Render job failed. Please try again.')
+          generationCompletedRef.current = true
           setIsGenerating(false)
         }
       } catch (err) {
@@ -812,6 +821,7 @@ export default function GeneratePage() {
           }
           setCurrentJobId(null)
           setError('Connection issue while checking render status. Please try again.')
+          generationCompletedRef.current = true
           setIsGenerating(false)
         }
       } finally {
@@ -838,6 +848,8 @@ export default function GeneratePage() {
       clearInterval(jobPollingIntervalRef.current)
       jobPollingIntervalRef.current = null
       setCurrentJobId(null)
+      // Do not overwrite state when the arrangement-polling path already resolved.
+      if (generationCompletedRef.current) return
       setIsGenerating(false)
       setError('Generation timed out after 90 seconds. Please try again.')
     }, JOB_TIMEOUT_MS)
@@ -926,6 +938,14 @@ export default function GeneratePage() {
   // above) so they are still correctly revoked on unmount.
   useEffect(() => {
     return () => {
+      if (arrangementPollingIntervalRef.current) {
+        clearInterval(arrangementPollingIntervalRef.current)
+        arrangementPollingIntervalRef.current = null
+      }
+      if (arrangementPollingTimeoutRef.current) {
+        clearTimeout(arrangementPollingTimeoutRef.current)
+        arrangementPollingTimeoutRef.current = null
+      }
       if (audioUrlRef.current) {
         URL.revokeObjectURL(audioUrlRef.current)
       }
@@ -1099,6 +1119,7 @@ export default function GeneratePage() {
     console.log('GENERATE_CLICKED', loopId)
 
     setIsGenerating(true)
+    generationCompletedRef.current = false
     setError(null)
     setArrangementId(null)
     setArrangementStatus(null)
@@ -1265,6 +1286,10 @@ export default function GeneratePage() {
       }
 
       // Dispatch async render job – the job-polling useEffect takes over from here.
+      // Capture existing arrangement IDs BEFORE dispatching so the arrangement-
+      // polling path can detect only newly-created arrangements.
+      const beforeIds = new Set(historyRows.map((a) => a.id))
+
       console.log("GENERATE_STARTED", { loopId, options })
       console.log('render_async_started', { loop_id: loopIdNum })
       const renderResponse = await renderLoopAsync(loopIdNum, options)
@@ -1275,6 +1300,83 @@ export default function GeneratePage() {
       console.log("JOB_ID_SET", job_id)
       setCurrentJobId(job_id)
       jobDispatched = true
+
+      // ── Emergency fix: arrangement-polling completion path ──────────────────
+      // /jobs/{job_id} polling is unreliable in production; arrangements?loop_id=
+      // reliably returns 200.  Poll that endpoint every 2 s for up to 90 s as a
+      // parallel completion path alongside job polling.  Whichever path finds the
+      // result first will set generationCompletedRef = true so the other path's
+      // timeout handler does not surface a stale error.
+      console.log("ARRANGEMENT_POLLING_STARTED")
+      const stopArrangementPolling = () => {
+        if (arrangementPollingIntervalRef.current) {
+          clearInterval(arrangementPollingIntervalRef.current)
+          arrangementPollingIntervalRef.current = null
+        }
+        if (arrangementPollingTimeoutRef.current) {
+          clearTimeout(arrangementPollingTimeoutRef.current)
+          arrangementPollingTimeoutRef.current = null
+        }
+      }
+      const pollArrangements = async () => {
+        if (generationCompletedRef.current) {
+          stopArrangementPolling()
+          return
+        }
+        try {
+          const arrangements = await listArrangements({ loopId: loopIdNum })
+          console.log("ARRANGEMENT_POLL_TICK", arrangements)
+          const newArrangements = arrangements
+            .filter((a) => !beforeIds.has(a.id))
+            .sort((a, b) => b.id - a.id)
+          if (newArrangements.length > 0) {
+            const newest = newArrangements[0]
+            console.log("ARRANGEMENT_FOUND", newest)
+            // JavaScript is single-threaded: the check and the assignment below
+            // are synchronous with no await between them, so this is effectively
+            // atomic – no other callback can interleave between these two lines.
+            if (generationCompletedRef.current) return
+            generationCompletedRef.current = true
+            // stopArrangementPolling clears arrangementPollingIntervalRef so any
+            // pending interval tick that fires afterwards exits immediately via
+            // the guard at the top of pollArrangements.
+            stopArrangementPolling()
+            // Fetch full status for audio URL resolution.
+            let newestStatus: ArrangementStatusResponse | null = null
+            try {
+              newestStatus = await getArrangementStatus(newest.id)
+            } catch (statusErr) {
+              console.warn('[LoopArchitect] Arrangement polling: failed to fetch status:', statusErr)
+            }
+            const resolvedAudioUrl = newestStatus ? resolveArrangementAudioUrl(newestStatus) : null
+            setIsGenerating(false)
+            setArrangementId(newest.id)
+            if (newestStatus) setArrangementStatus(newestStatus)
+            if (resolvedAudioUrl) setAudioUrl(resolvedAudioUrl)
+            setPreviewCandidates([{
+              arrangement_id: newest.id,
+              audioUrl: resolvedAudioUrl,
+              arrangementStatus: newestStatus ?? undefined,
+              status: 'done',
+              created_at: newest.created_at ?? new Date().toISOString(),
+            }])
+            setSelectedPreviewId(newest.id)
+            setError(null)
+            console.log("GENERATE_UI_COMPLETE")
+          }
+        } catch {
+          // Swallow transient errors – keep polling.
+        }
+      }
+      arrangementPollingIntervalRef.current = setInterval(pollArrangements, 2000)
+      pollArrangements()
+      arrangementPollingTimeoutRef.current = setTimeout(() => {
+        stopArrangementPolling()
+        if (!generationCompletedRef.current) {
+          setIsGenerating(false)
+          setError('Generation timed out. The render may still finish in Recent Generations.')
+        }
+      }, 90_000)
 
       // Optimistic history refresh so the row appears immediately.
       await loadHistory(loopIdNum)
