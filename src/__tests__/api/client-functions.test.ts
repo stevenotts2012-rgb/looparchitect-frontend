@@ -4,6 +4,7 @@
  * The jsdom test environment provides `window`, so:
  *  - `getApiBasePath()` → '/api' (relative proxy path)
  *  - `getUploadUrl()` → direct Railway backend origin
+ *  - `getDirectBackendUrl()` → direct Railway backend origin
  */
 
 import {
@@ -26,6 +27,9 @@ import {
   analyzeReferenceTrack,
   LoopArchitectApiError,
 } from '@/../../api/client'
+
+// The Railway backend origin configured in beforeEach via NEXT_PUBLIC_BACKEND_ORIGIN.
+const RAILWAY_ORIGIN = 'https://web-production-3afc5.up.railway.app'
 
 // ---------------------------------------------------------------------------
 // Fetch mock helpers
@@ -61,8 +65,8 @@ beforeEach(() => {
   jest.spyOn(console, 'warn').mockImplementation(() => {})
   jest.spyOn(console, 'error').mockImplementation(() => {})
   jest.spyOn(console, 'log').mockImplementation(() => {})
-  // Set backend origin so getUploadUrl() resolves (no hardcoded fallback)
-  process.env.NEXT_PUBLIC_BACKEND_ORIGIN = 'https://web-production-3afc5.up.railway.app'
+  // Set backend origin so getUploadUrl() and getDirectBackendUrl() resolve (no hardcoded fallback)
+  process.env.NEXT_PUBLIC_BACKEND_ORIGIN = RAILWAY_ORIGIN
 })
 
 afterEach(() => {
@@ -101,7 +105,7 @@ describe('renderLoopAsync', () => {
     global.fetch = makeFetchMock(mockRenderResponse)
     await renderLoopAsync(1, { targetSeconds: 60 })
     const [[url]] = (global.fetch as jest.Mock).mock.calls
-    expect(url).toBe('https://web-production-3afc5.up.railway.app/api/v1/loops/1/render-async')
+    expect(url).toBe(`${RAILWAY_ORIGIN}/api/v1/loops/1/render-async`)
   })
 
   it('sends target_seconds in the request body', async () => {
@@ -392,7 +396,7 @@ describe('getArrangementStatus', () => {
     global.fetch = makeFetchMock(mockStatus)
     await getArrangementStatus(5)
     const [[url]] = (global.fetch as jest.Mock).mock.calls
-    expect(url).toBe('https://web-production-3afc5.up.railway.app/api/v1/arrangements/5')
+    expect(url).toBe(`${RAILWAY_ORIGIN}/api/v1/arrangements/5`)
   })
 
   it('sends cache-busting headers', async () => {
@@ -571,7 +575,7 @@ describe('listArrangements', () => {
     global.fetch = makeFetchMock(mockArrangements)
     await listArrangements()
     const [[url]] = (global.fetch as jest.Mock).mock.calls
-    expect(url).toBe('https://web-production-3afc5.up.railway.app/api/v1/arrangements')
+    expect(url).toBe(`${RAILWAY_ORIGIN}/api/v1/arrangements`)
   })
 
   it('appends loop_id query param when provided', async () => {
@@ -579,7 +583,7 @@ describe('listArrangements', () => {
     await listArrangements({ loopId: 5 })
     const [[url]] = (global.fetch as jest.Mock).mock.calls
     expect(url).toContain('loop_id=5')
-    expect(url).toBe('https://web-production-3afc5.up.railway.app/api/v1/arrangements?loop_id=5')
+    expect(url).toBe(`${RAILWAY_ORIGIN}/api/v1/arrangements?loop_id=5`)
   })
 
   it('does not append loop_id when not provided', async () => {
