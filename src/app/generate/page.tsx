@@ -1332,9 +1332,14 @@ export default function GeneratePage() {
           if (newArrangements.length > 0) {
             const newest = newArrangements[0]
             console.log("ARRANGEMENT_FOUND", newest)
-            // Atomically claim completion so the parallel job-polling path skips.
+            // JavaScript is single-threaded: the check and the assignment below
+            // are synchronous with no await between them, so this is effectively
+            // atomic – no other callback can interleave between these two lines.
             if (generationCompletedRef.current) return
             generationCompletedRef.current = true
+            // stopArrangementPolling clears arrangementPollingIntervalRef so any
+            // pending interval tick that fires afterwards exits immediately via
+            // the guard at the top of pollArrangements.
             stopArrangementPolling()
             // Fetch full status for audio URL resolution.
             let newestStatus: ArrangementStatusResponse | null = null
