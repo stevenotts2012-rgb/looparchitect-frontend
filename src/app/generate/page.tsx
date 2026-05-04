@@ -134,6 +134,7 @@ export default function GeneratePage() {
   })
 
   const [currentJobId, setCurrentJobId] = useState<string | null>(null)
+  const [currentJobIds, setCurrentJobIds] = useState<string[] | null>(null)
 
   const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null)
   const pollingErrorCountRef = useRef<number>(0)
@@ -850,6 +851,53 @@ export default function GeneratePage() {
     }
   }, [currentJobId, loadHistory, loopId])
 
+  // Poll multiple async render jobs when renderLoopAsync returns a job_ids array.
+  // Starts when currentJobIds is set (by handleGenerate). Polls each job_id in
+  // the array and clears isGenerating once all jobs have reached a terminal state.
+  useEffect(() => {
+    if (!currentJobIds || currentJobIds.length === 0) return
+
+    console.log('JOB_POLLING_STARTED', { job_ids: currentJobIds })
+
+    const MULTI_JOB_TERMINAL_STATUSES = new Set([
+      'finished', 'completed', 'done', 'success', 'failed', 'error', 'cancelled',
+    ])
+    let isPolling = false
+
+    const pollJobs = async () => {
+      if (isPolling) return
+      isPolling = true
+      try {
+        const results = await Promise.all(currentJobIds.map((id) => getJobStatus(id)))
+        const allDone = results.every((job) => {
+          const effectiveStatus = job.status ?? (job as Record<string, unknown>).state ?? 'unknown'
+          return MULTI_JOB_TERMINAL_STATUSES.has(effectiveStatus as string)
+        })
+        if (allDone) {
+          if (jobPollingIntervalRef.current) {
+            clearInterval(jobPollingIntervalRef.current)
+            jobPollingIntervalRef.current = null
+          }
+          setCurrentJobIds(null)
+          setIsGenerating(false)
+          await loadHistory()
+        }
+      } catch (err) {
+        console.error('Error polling job statuses:', err)
+      } finally {
+        isPolling = false
+      }
+    }
+
+    const intervalId = setInterval(pollJobs, 3000)
+    pollJobs()
+
+    return () => {
+      clearInterval(intervalId)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentJobIds])
+
   // Sync selectedPreviewId → main arrangement state.
   //
   // DEFENSIVE FIX: When `previewCandidates` updates (e.g. after a poll tick) but
@@ -1258,12 +1306,40 @@ export default function GeneratePage() {
       const renderResponse = await renderLoopAsync(loopIdNum, options)
       console.log('RENDER_ASYNC_RESPONSE', renderResponse)
       console.log("RENDER_ASYNC_RESPONSE_FULL", renderResponse)
-      console.log('job_id_received', { job_id: renderResponse.job_id, loop_id: loopIdNum })
-      setCurrentJobId(renderResponse.job_id)
-      jobDispatched = true
+
+      // Normalize job id from different response shapes that the backend may return.
+      const job_id: string | null =
+        renderResponse.job_id ??
+        renderResponse.jobId ??
+        renderResponse.id ??
+        null
+      const job_ids: string[] | null =
+        Array.isArray(renderResponse.job_ids) && renderResponse.job_ids.length > 0
+          ? renderResponse.job_ids
+          : null
+
+      if (job_id) {
+        console.log('JOB_ID_SELECTED_FOR_POLLING', job_id)
+        console.log('JOB_POLLING_STARTED', { job_id })
+        console.log('job_id_received', { job_id, loop_id: loopIdNum })
+        setCurrentJobId(job_id)
+        setIsGenerating(true)
+        jobDispatched = true
+      } else if (job_ids) {
+        console.log('JOB_IDS_SELECTED_FOR_POLLING', job_ids)
+        console.log('JOB_POLLING_STARTED', { job_ids })
+        setCurrentJobIds(job_ids)
+        setIsGenerating(true)
+        jobDispatched = true
+      } else {
+        setIsGenerating(false)
+        setError('Render started but no job ID was returned.')
+      }
 
       // Optimistic history refresh so the row appears immediately.
-      await loadHistory(loopIdNum)
+      if (jobDispatched) {
+        await loadHistory(loopIdNum)
+      }
     } catch (err) {
       if (err instanceof LoopArchitectApiError) {
         // Check for missing file error (400 status with "missing" in message)
