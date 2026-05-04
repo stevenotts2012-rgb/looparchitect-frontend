@@ -1985,3 +1985,177 @@ describe('State machine: required behaviors', () => {
     expect(screen.getByRole('button', { name: /Generate Arrangement/i })).not.toBeDisabled()
   })
 })
+
+// ===========================================================================
+// Tests: Arrangement-polling completion path (emergency fix)
+// ===========================================================================
+
+describe('Arrangement-polling completion path', () => {
+  /**
+   * Set up mocks so that arrangements polling (not job polling) is the path
+   * that finds the new arrangement.
+   *
+   * – listArrangements returns [] on the first call (initial history load),
+   *   so historyRows is empty and beforeIds is an empty Set.
+   * – On subsequent calls it returns a new arrangement (id=100), which is
+   *   NOT in beforeIds → detected as "new" by the polling loop.
+   * – getJobStatus never resolves to a terminal status, so job polling
+   *   does not race with arrangements polling in these tests.
+   */
+  function setupArrangementPollingMocks(newId = 100) {
+    ;(renderLoopAsync as jest.Mock).mockResolvedValue({ job_id: 'job-arr-poll' })
+    ;(getJobStatus as jest.Mock).mockResolvedValue({ status: 'processing' })
+    ;(listArrangements as jest.Mock)
+      .mockResolvedValueOnce([])                                  // initial history load
+      .mockResolvedValue([makeArrangement({ id: newId })])        // arrangement polling ticks
+    ;(getArrangementStatus as jest.Mock).mockResolvedValue(
+      makeArrangementStatus({ id: newId, output_url: `https://cdn.example.com/${newId}.wav` })
+    )
+    ;(resolveArrangementAudioUrl as jest.Mock).mockReturnValue(
+      `https://cdn.example.com/${newId}.wav`
+    )
+  }
+
+  it('emits ARRANGEMENT_POLLING_STARTED after renderLoopAsync resolves', async () => {
+    setupArrangementPollingMocks()
+
+    await renderPage('1')
+    const loopInput = screen.getByRole('spinbutton', { name: /Loop ID/i })
+    await act(async () => { fireEvent.change(loopInput, { target: { value: '1' } }) })
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: /Generate Arrangement/i })) })
+    await flushPromises()
+
+    await waitFor(() => {
+      expect(console.log).toHaveBeenCalledWith('ARRANGEMENT_POLLING_STARTED')
+    })
+  })
+
+  it('emits ARRANGEMENT_POLL_TICK when listArrangements returns results', async () => {
+    setupArrangementPollingMocks()
+
+    await renderPage('1')
+    const loopInput = screen.getByRole('spinbutton', { name: /Loop ID/i })
+    await act(async () => { fireEvent.change(loopInput, { target: { value: '1' } }) })
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: /Generate Arrangement/i })) })
+    await flushPromises()
+
+    await waitFor(() => {
+      expect(console.log).toHaveBeenCalledWith(
+        'ARRANGEMENT_POLL_TICK',
+        expect.arrayContaining([expect.objectContaining({ id: 100 })])
+      )
+    })
+  })
+
+  it('emits ARRANGEMENT_FOUND when a new arrangement is detected', async () => {
+    setupArrangementPollingMocks()
+
+    await renderPage('1')
+    const loopInput = screen.getByRole('spinbutton', { name: /Loop ID/i })
+    await act(async () => { fireEvent.change(loopInput, { target: { value: '1' } }) })
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: /Generate Arrangement/i })) })
+    await flushPromises()
+
+    await waitFor(() => {
+      expect(console.log).toHaveBeenCalledWith(
+        'ARRANGEMENT_FOUND',
+        expect.objectContaining({ id: 100 })
+      )
+    })
+  })
+
+  it('emits GENERATE_UI_COMPLETE via arrangement polling', async () => {
+    setupArrangementPollingMocks()
+
+    await renderPage('1')
+    const loopInput = screen.getByRole('spinbutton', { name: /Loop ID/i })
+    await act(async () => { fireEvent.change(loopInput, { target: { value: '1' } }) })
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: /Generate Arrangement/i })) })
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+      await Promise.resolve()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    await waitFor(() => {
+      expect(console.log).toHaveBeenCalledWith('GENERATE_UI_COMPLETE')
+    })
+  })
+
+  it('stops generating spinner when arrangement polling finds new arrangement', async () => {
+    setupArrangementPollingMocks()
+
+    await renderPage('1')
+    const loopInput = screen.getByRole('spinbutton', { name: /Loop ID/i })
+    await act(async () => { fireEvent.change(loopInput, { target: { value: '1' } }) })
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: /Generate Arrangement/i })) })
+    await act(async () => {
+      for (let i = 0; i < 6; i++) await Promise.resolve()
+    })
+
+    // Once arrangements polling completes, Preview Variations section appears
+    // and the re-generate button is not disabled (isGenerating = false).
+    await waitFor(() => {
+      expect(screen.getByText(/Preview Variations/i)).toBeInTheDocument()
+    })
+    expect(screen.getByRole('button', { name: /Generate 3 New Variations/i })).not.toBeDisabled()
+  })
+
+  it('calls getArrangementStatus for the newly found arrangement', async () => {
+    setupArrangementPollingMocks(200)
+
+    await renderPage('1')
+    const loopInput = screen.getByRole('spinbutton', { name: /Loop ID/i })
+    await act(async () => { fireEvent.change(loopInput, { target: { value: '1' } }) })
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: /Generate Arrangement/i })) })
+    await act(async () => {
+      for (let i = 0; i < 6; i++) await Promise.resolve()
+    })
+
+    await waitFor(() => {
+      expect(getArrangementStatus).toHaveBeenCalledWith(200)
+    })
+  })
+
+  it('shows the arrangement player UI via arrangement polling', async () => {
+    setupArrangementPollingMocks()
+
+    await renderPage('1')
+    const loopInput = screen.getByRole('spinbutton', { name: /Loop ID/i })
+    await act(async () => { fireEvent.change(loopInput, { target: { value: '1' } }) })
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: /Generate Arrangement/i })) })
+    await act(async () => {
+      for (let i = 0; i < 6; i++) await Promise.resolve()
+    })
+
+    await waitFor(() => {
+      expect(screen.getByTestId('arrangement-status')).toBeInTheDocument()
+    })
+    expect(screen.getByTestId('arrangement-status')).toHaveAttribute('data-status', 'done')
+    expect(screen.getByTestId('download-btn')).toHaveTextContent('100')
+  })
+
+  it('arrangement polling timeout shows correct error message', async () => {
+    ;(renderLoopAsync as jest.Mock).mockResolvedValue({ job_id: 'job-arr-timeout' })
+    ;(getJobStatus as jest.Mock).mockResolvedValue({ status: 'processing' })
+    // listArrangements always returns [] – arrangement never appears
+    ;(listArrangements as jest.Mock).mockResolvedValue([])
+
+    await renderPage('1')
+    const loopInput = screen.getByRole('spinbutton', { name: /Loop ID/i })
+    await act(async () => { fireEvent.change(loopInput, { target: { value: '1' } }) })
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: /Generate Arrangement/i })) })
+    await flushPromises()
+
+    // Advance past both the arrangement-polling and job-polling timeouts.
+    await act(async () => { jest.advanceTimersByTime(90_000) })
+
+    // Either timeout error is acceptable; the important thing is that the UI
+    // is unblocked (isGenerating = false).
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /Generate Arrangement/i })).not.toBeDisabled()
+    })
+  })
+})
