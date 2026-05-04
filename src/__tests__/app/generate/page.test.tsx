@@ -1985,3 +1985,94 @@ describe('State machine: required behaviors', () => {
     expect(screen.getByRole('button', { name: /Generate Arrangement/i })).not.toBeDisabled()
   })
 })
+
+// ===========================================================================
+// Tests: render-async response job_id normalization and multi-polling
+// ===========================================================================
+
+describe('render-async response job_id normalization', () => {
+  /**
+   * Render the page, click Generate, and flush enough microtask ticks for
+   * renderLoopAsync to resolve and the first poll to fire.
+   */
+  async function triggerAndFlush(loopIdVal = '1', ticks = 5) {
+    await renderPage(loopIdVal)
+    const loopInput = screen.getByRole('spinbutton', { name: /Loop ID/i })
+    await act(async () => {
+      fireEvent.change(loopInput, { target: { value: loopIdVal } })
+    })
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /Generate Arrangement/i }))
+    })
+    await act(async () => {
+      for (let i = 0; i < ticks; i++) await Promise.resolve()
+    })
+  }
+
+  it('response with job_id starts polling', async () => {
+    ;(renderLoopAsync as jest.Mock).mockResolvedValue({ job_id: 'job-norm-jid' })
+    ;(getJobStatus as jest.Mock).mockResolvedValue({ status: 'finished', arrangement_id: 42 })
+    ;(getArrangementStatus as jest.Mock).mockResolvedValue(makeArrangementStatus({ id: 42 }))
+    ;(listArrangements as jest.Mock).mockResolvedValue([makeArrangement({ id: 42 })])
+
+    await triggerAndFlush()
+
+    await waitFor(() => {
+      expect(getJobStatus).toHaveBeenCalledWith('job-norm-jid')
+    })
+  })
+
+  it('response with jobId (camelCase) starts polling', async () => {
+    ;(renderLoopAsync as jest.Mock).mockResolvedValue({ jobId: 'job-norm-jobId' })
+    ;(getJobStatus as jest.Mock).mockResolvedValue({ status: 'finished', arrangement_id: 42 })
+    ;(getArrangementStatus as jest.Mock).mockResolvedValue(makeArrangementStatus({ id: 42 }))
+    ;(listArrangements as jest.Mock).mockResolvedValue([makeArrangement({ id: 42 })])
+
+    await triggerAndFlush()
+
+    await waitFor(() => {
+      expect(getJobStatus).toHaveBeenCalledWith('job-norm-jobId')
+    })
+  })
+
+  it('response with id starts polling', async () => {
+    ;(renderLoopAsync as jest.Mock).mockResolvedValue({ id: 'job-norm-id' })
+    ;(getJobStatus as jest.Mock).mockResolvedValue({ status: 'finished', arrangement_id: 42 })
+    ;(getArrangementStatus as jest.Mock).mockResolvedValue(makeArrangementStatus({ id: 42 }))
+    ;(listArrangements as jest.Mock).mockResolvedValue([makeArrangement({ id: 42 })])
+
+    await triggerAndFlush()
+
+    await waitFor(() => {
+      expect(getJobStatus).toHaveBeenCalledWith('job-norm-id')
+    })
+  })
+
+  it('response with job_ids starts multi polling for each id', async () => {
+    ;(renderLoopAsync as jest.Mock).mockResolvedValue({ job_ids: ['job-multi-1', 'job-multi-2'] })
+    ;(getJobStatus as jest.Mock).mockResolvedValue({ status: 'finished', arrangement_id: 42 })
+    ;(getArrangementStatus as jest.Mock).mockResolvedValue(makeArrangementStatus({ id: 42 }))
+    ;(listArrangements as jest.Mock).mockResolvedValue([makeArrangement({ id: 42 })])
+
+    await triggerAndFlush()
+
+    await waitFor(() => {
+      expect(getJobStatus).toHaveBeenCalledWith('job-multi-1')
+      expect(getJobStatus).toHaveBeenCalledWith('job-multi-2')
+    })
+  })
+
+  it('missing job id clears generating and shows error', async () => {
+    // renderLoopAsync returns a response with no recognisable job id field.
+    ;(renderLoopAsync as jest.Mock).mockResolvedValue({})
+
+    await triggerAndFlush()
+
+    await waitFor(() => {
+      expect(screen.getByText(/Render started but no job ID was returned/i)).toBeInTheDocument()
+    })
+    // isGenerating must be cleared so the Generate button is re-enabled.
+    const generateBtn = screen.getByRole('button', { name: /Generate Arrangement/i })
+    expect(generateBtn).not.toBeDisabled()
+  })
+})

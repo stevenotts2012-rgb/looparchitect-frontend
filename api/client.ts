@@ -1075,7 +1075,14 @@ export async function analyzeReferenceTrack(
  * Response from POST /v1/loops/{loop_id}/render-async
  */
 export interface RenderAsyncResponse {
-  job_id: string;
+  /** Canonical job identifier returned by the backend. */
+  job_id?: string;
+  /** Alternative camelCase variant used by some backend versions. */
+  jobId?: string;
+  /** Generic id field used by some backend versions. */
+  id?: string;
+  /** Array of job ids returned when the backend dispatches multiple render jobs. */
+  job_ids?: string[];
   loop_id?: number;
   status?: string;
   message?: string;
