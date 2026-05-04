@@ -593,6 +593,7 @@ export default function GeneratePage() {
       try {
         const job = await getJobStatus(currentJobId)
         console.log("RAW_JOB_RESPONSE", job)
+        console.log("POLL_TICK", job)
         console.log('job_status_update', { job_id: currentJobId, status: job.status })
 
         // Normalise across alternative field names used by different backend versions.
@@ -1269,8 +1270,10 @@ export default function GeneratePage() {
       const renderResponse = await renderLoopAsync(loopIdNum, options)
       console.log('RENDER_ASYNC_RESPONSE', renderResponse)
       console.log("RENDER_ASYNC_RESPONSE_FULL", renderResponse)
-      console.log('job_id_received', { job_id: renderResponse.job_id, loop_id: loopIdNum })
-      setCurrentJobId(renderResponse.job_id)
+      const job_id = renderResponse.job_id
+      console.log('job_id_received', { job_id, loop_id: loopIdNum })
+      console.log("JOB_ID_SET", job_id)
+      setCurrentJobId(job_id)
       jobDispatched = true
 
       // Optimistic history refresh so the row appears immediately.
