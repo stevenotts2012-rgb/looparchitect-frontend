@@ -61,6 +61,32 @@ function getUploadUrl(path: string): string {
   return `${origin}/api${normalized}`;
 }
 
+// Build a URL that always targets the Railway backend directly, bypassing the
+// Vercel proxy.  Used for read operations (GET) that must reach the same backend
+// where async render jobs run, so polling never hits a stale Vercel proxy.
+// NEXT_PUBLIC_BACKEND_ORIGIN must be set in Vercel environment variables:
+//   Staging:    https://web-staging-cb7b.up.railway.app
+//   Production: https://web-production-3afc5.up.railway.app
+function getDirectBackendUrl(path: string): string {
+  const normalized = path.startsWith('/') ? path : `/${path}`;
+
+  // Server-side: resolve via the configured backend origin env vars.
+  if (typeof window === 'undefined') {
+    return `${getApiBasePath()}${normalized}`;
+  }
+
+  // Browser: bypass the Vercel proxy and go directly to the Railway backend.
+  const configured = (process.env.NEXT_PUBLIC_BACKEND_ORIGIN || process.env.NEXT_PUBLIC_API_URL || '').trim();
+  if (!configured.startsWith('http://') && !configured.startsWith('https://')) {
+    throw new Error(
+      'NEXT_PUBLIC_BACKEND_ORIGIN environment variable is not set. Cannot determine backend URL.'
+    );
+  }
+  const origin = configured.replace(/\/$/, '');
+
+  return `${origin}/api${normalized}`;
+}
+
 function generateCorrelationId(): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
     return crypto.randomUUID();
@@ -327,7 +353,9 @@ export async function getArrangementStatus(
 ): Promise<ArrangementStatusResponse> {
   try {
     const correlationId = generateCorrelationId();
-    const response = await fetch(apiUrl(`/v1/arrangements/${id}`), {
+    const url = getDirectBackendUrl(`/v1/arrangements/${id}`);
+    console.log('ARRANGEMENT_STATUS_URL', url);
+    const response = await fetch(url, {
       method: 'GET',
       headers: {
         ...createJsonHeaders(correlationId),
@@ -622,8 +650,10 @@ export async function listArrangements(options?: {
     }
 
     const query = params.toString();
+    const url = `${getDirectBackendUrl('/v1/arrangements')}${query ? `?${query}` : ''}`;
+    console.log('LIST_ARRANGEMENTS_URL', url);
     const response = await fetch(
-      `${apiUrl('/v1/arrangements')}${query ? `?${query}` : ''}`,
+      url,
       {
         method: 'GET',
         headers: createJsonHeaders(correlationId),

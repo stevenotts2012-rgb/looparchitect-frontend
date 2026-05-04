@@ -380,6 +380,21 @@ describe('getArrangementStatus', () => {
     expect(url).not.toContain('metadata')
   })
 
+  it('calls fetch with a fully-qualified https URL, never a relative /api/... path', async () => {
+    global.fetch = makeFetchMock(mockStatus)
+    await getArrangementStatus(5)
+    const [[url]] = (global.fetch as jest.Mock).mock.calls
+    expect(url).toMatch(/^https?:\/\//)
+    expect(url).not.toMatch(/^\/api\//)
+  })
+
+  it('targets the Railway backend origin for the arrangement status endpoint', async () => {
+    global.fetch = makeFetchMock(mockStatus)
+    await getArrangementStatus(5)
+    const [[url]] = (global.fetch as jest.Mock).mock.calls
+    expect(url).toBe('https://web-production-3afc5.up.railway.app/api/v1/arrangements/5')
+  })
+
   it('sends cache-busting headers', async () => {
     global.fetch = makeFetchMock(mockStatus)
     await getArrangementStatus(5)
@@ -544,11 +559,27 @@ describe('listArrangements', () => {
     expect(url).toContain('/v1/arrangements')
   })
 
+  it('calls fetch with a fully-qualified https URL, never a relative /api/... path', async () => {
+    global.fetch = makeFetchMock(mockArrangements)
+    await listArrangements()
+    const [[url]] = (global.fetch as jest.Mock).mock.calls
+    expect(url).toMatch(/^https?:\/\//)
+    expect(url).not.toMatch(/^\/api\//)
+  })
+
+  it('targets the Railway backend origin for the arrangements list endpoint', async () => {
+    global.fetch = makeFetchMock(mockArrangements)
+    await listArrangements()
+    const [[url]] = (global.fetch as jest.Mock).mock.calls
+    expect(url).toBe('https://web-production-3afc5.up.railway.app/api/v1/arrangements')
+  })
+
   it('appends loop_id query param when provided', async () => {
     global.fetch = makeFetchMock(mockArrangements)
     await listArrangements({ loopId: 5 })
     const [[url]] = (global.fetch as jest.Mock).mock.calls
     expect(url).toContain('loop_id=5')
+    expect(url).toBe('https://web-production-3afc5.up.railway.app/api/v1/arrangements?loop_id=5')
   })
 
   it('does not append loop_id when not provided', async () => {
