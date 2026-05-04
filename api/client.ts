@@ -2,12 +2,22 @@
 // Connects Next.js frontend to FastAPI backend on Railway
 
 function getApiBasePath(): string {
-  // In the browser, use a relative path so all API calls are routed through
-  // the Next.js API proxy route (src/app/api/[...path]/route.ts), which then
-  // forwards the request to the backend on the server side. This avoids CORS
-  // issues because the browser never makes a request directly to the backend.
+  // Always bypass the Next.js/Vercel proxy and go directly to the Railway
+  // backend, both in the browser and server-side. This ensures that polling
+  // for job/arrangement results always hits the same backend where the render
+  // jobs ran, so results are never missed.
+  //
+  // NEXT_PUBLIC_BACKEND_ORIGIN must be set at build time in Vercel:
+  //   Staging:    https://web-staging-cb7b.up.railway.app
+  //   Production: https://web-production-3afc5.up.railway.app
   if (typeof window !== 'undefined') {
-    return '/api';
+    const configured = (process.env.NEXT_PUBLIC_BACKEND_ORIGIN || process.env.NEXT_PUBLIC_API_URL || '').trim();
+    if (!configured.startsWith('http://') && !configured.startsWith('https://')) {
+      throw new Error(
+        'NEXT_PUBLIC_BACKEND_ORIGIN environment variable is not set. Cannot determine API base path.'
+      );
+    }
+    return `${configured.replace(/\/$/, '')}/api`;
   }
 
   // Server-side (e.g. SSR or API routes): resolve the backend origin directly.
@@ -305,7 +315,9 @@ async function handleResponse<T>(response: Response): Promise<T> {
 export async function saveArrangement(arrangementId: number): Promise<Arrangement> {
   try {
     const correlationId = generateCorrelationId();
-    const response = await fetch(apiUrl(`/v1/arrangements/${arrangementId}/save`), {
+    const url = apiUrl(`/v1/arrangements/${arrangementId}/save`);
+    console.log("API_CALL", url);
+    const response = await fetch(url, {
       method: 'POST',
       headers: createJsonHeaders(correlationId),
     });
@@ -325,7 +337,9 @@ export async function saveArrangement(arrangementId: number): Promise<Arrangemen
 export async function listStylePresets(): Promise<StylePresetResponse[]> {
   try {
     const correlationId = generateCorrelationId();
-    const response = await fetch(apiUrl('/v1/styles'), {
+    const url = apiUrl('/v1/styles');
+    console.log("API_CALL", url);
+    const response = await fetch(url, {
       method: 'GET',
       headers: createJsonHeaders(correlationId),
     });
@@ -354,7 +368,7 @@ export async function getArrangementStatus(
   try {
     const correlationId = generateCorrelationId();
     const url = getDirectBackendUrl(`/v1/arrangements/${id}`);
-    console.log('ARRANGEMENT_STATUS_URL', url);
+    console.log("API_CALL", url);
     const response = await fetch(url, {
       method: 'GET',
       headers: {
@@ -525,7 +539,9 @@ export async function getArrangementMetadata(
 ): Promise<ArrangementMetadataResponse> {
   try {
     const correlationId = generateCorrelationId();
-    const response = await fetch(apiUrl(`/v1/arrangements/${id}/metadata`), {
+    const url = apiUrl(`/v1/arrangements/${id}/metadata`);
+    console.log("API_CALL", url);
+    const response = await fetch(url, {
       method: 'GET',
       headers: {
         ...createJsonHeaders(correlationId),
@@ -572,7 +588,9 @@ export async function getArrangementPlan(payload: {
 }): Promise<ArrangementPlanResponse> {
   try {
     const correlationId = generateCorrelationId();
-    const response = await fetch(apiUrl('/v1/arrangements/plan'), {
+    const url = apiUrl('/v1/arrangements/plan');
+    console.log("API_CALL", url);
+    const response = await fetch(url, {
       method: 'POST',
       headers: createJsonHeaders(correlationId),
       body: JSON.stringify(payload),
@@ -614,7 +632,9 @@ export async function validateStyle(profile: {
 }> {
   try {
     const correlationId = generateCorrelationId();
-    const response = await fetch(apiUrl('/v1/styles/validate'), {
+    const url = apiUrl('/v1/styles/validate');
+    console.log("API_CALL", url);
+    const response = await fetch(url, {
       method: 'POST',
       headers: createJsonHeaders(correlationId),
       body: JSON.stringify({ profile }),
@@ -651,7 +671,7 @@ export async function listArrangements(options?: {
 
     const query = params.toString();
     const url = `${getDirectBackendUrl('/v1/arrangements')}${query ? `?${query}` : ''}`;
-    console.log('LIST_ARRANGEMENTS_URL', url);
+    console.log("API_CALL", url);
     const response = await fetch(
       url,
       {
@@ -691,6 +711,7 @@ const DOWNLOAD_TIMEOUT_MS = 30_000;
  */
 export async function downloadArrangement(id: number): Promise<Blob> {
   const endpoint = apiUrl(`/v1/arrangements/${id}/download`);
+  console.log("API_CALL", endpoint);
   console.debug('[LoopArchitect] downloadArrangement – endpoint called', { id, endpoint });
 
   const controller = new AbortController();
@@ -752,7 +773,9 @@ export async function downloadArrangement(id: number): Promise<Blob> {
 export async function getDawExportInfo(id: number): Promise<DawExportResponse> {
   try {
     const correlationId = generateCorrelationId();
-    const response = await fetch(apiUrl(`/v1/arrangements/${id}/daw-export`), {
+    const url = apiUrl(`/v1/arrangements/${id}/daw-export`);
+    console.log("API_CALL", url);
+    const response = await fetch(url, {
       method: 'GET',
       headers: createJsonHeaders(correlationId),
     });
@@ -776,8 +799,10 @@ export async function getDawExportInfo(id: number): Promise<DawExportResponse> {
 export async function downloadDawExport(id: number): Promise<Blob> {
   try {
     const correlationId = generateCorrelationId();
+    const url = apiUrl(`/v1/arrangements/${id}/daw-export/download`);
+    console.log("API_CALL", url);
     const response = await fetch(
-      apiUrl(`/v1/arrangements/${id}/daw-export/download`),
+      url,
       {
         method: 'GET',
         headers: {
@@ -814,7 +839,9 @@ export async function downloadDawExport(id: number): Promise<Blob> {
 export async function getLoop(loopId: number): Promise<LoopResponse> {
   try {
     const correlationId = generateCorrelationId();
-    const response = await fetch(apiUrl(`/v1/loops/${loopId}`), {
+    const url = apiUrl(`/v1/loops/${loopId}`);
+    console.log("API_CALL", url);
+    const response = await fetch(url, {
       method: 'GET',
       headers: createJsonHeaders(correlationId),
     });
@@ -838,7 +865,9 @@ export async function getLoop(loopId: number): Promise<LoopResponse> {
  */
 export async function downloadLoop(loopId: number): Promise<string> {
   try {
-    const response = await fetch(apiUrl(`/v1/loops/${loopId}/download`), {
+    const url = apiUrl(`/v1/loops/${loopId}/download`);
+    console.log("API_CALL", url);
+    const response = await fetch(url, {
       method: 'GET',
     });
 
@@ -869,7 +898,9 @@ export async function downloadLoop(loopId: number): Promise<string> {
 export async function validateLoopSource(loopId: number): Promise<void> {
   try {
     const correlationId = generateCorrelationId();
-    const response = await fetch(apiUrl(`/v1/loops/${loopId}/play`), {
+    const url = apiUrl(`/v1/loops/${loopId}/play`);
+    console.log("API_CALL", url);
+    const response = await fetch(url, {
       method: 'GET',
       headers: createJsonHeaders(correlationId),
     });
@@ -1022,8 +1053,10 @@ export async function retryPreviewRender(
 ): Promise<{ queued: boolean; message: string }> {
   try {
     const correlationId = generateCorrelationId();
+    const url = apiUrl(`/v1/arrangements/${arrangementId}/retry-preview`);
+    console.log("API_CALL", url);
     const response = await fetch(
-      apiUrl(`/v1/arrangements/${arrangementId}/retry-preview`),
+      url,
       {
         method: 'POST',
         headers: createJsonHeaders(correlationId),
@@ -1043,7 +1076,9 @@ export async function retryPreviewRender(
 
 export async function fetchLoopPlayUrl(loopId: number): Promise<string> {
   const correlationId = generateCorrelationId();
-  const response = await fetch(apiUrl(`/v1/loops/${loopId}/play`), {
+  const url = apiUrl(`/v1/loops/${loopId}/play`);
+  console.log("API_CALL", url);
+  const response = await fetch(url, {
     method: 'GET',
     headers: createJsonHeaders(correlationId),
   });
@@ -1204,7 +1239,7 @@ export async function renderLoopAsync(
     if (options?.guidanceMode) requestBody.guidance_mode = options.guidanceMode;
 
     const url = getUploadUrl(`/v1/loops/${loopId}/render-async`);
-    console.log('RENDER_ASYNC_FULL_URL', url);
+    console.log("API_CALL", url);
     const response = await fetch(url, {
       method: 'POST',
       headers: createJsonHeaders(correlationId),
@@ -1238,7 +1273,9 @@ export async function renderLoopAsync(
 export async function getJobStatus(jobId: string): Promise<JobStatusResponse> {
   try {
     const correlationId = generateCorrelationId();
-    const response = await fetch(apiUrl(`/v1/jobs/${jobId}`), {
+    const url = apiUrl(`/v1/jobs/${jobId}`);
+    console.log("API_CALL", url);
+    const response = await fetch(url, {
       method: 'GET',
       headers: {
         ...createJsonHeaders(correlationId),
