@@ -2,9 +2,11 @@
  * Tests for api/client.ts – all major API functions.
  *
  * The jsdom test environment provides `window`, so:
- *  - `getApiBasePath()` → '/api' (relative proxy path)
+ *  - `getApiBasePath()` → direct Railway backend origin (same as getUploadUrl and getDirectBackendUrl)
  *  - `getUploadUrl()` → direct Railway backend origin
  *  - `getDirectBackendUrl()` → direct Railway backend origin
+ *
+ * All API functions now bypass the Vercel proxy and call Railway directly.
  */
 
 import {
