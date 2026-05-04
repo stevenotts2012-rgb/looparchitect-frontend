@@ -1185,9 +1185,20 @@ export default function GeneratePage() {
         options.styleTextInput = styleTextInput.trim()
         options.useAiParsing = useAiParsing
         
-        // PHASE 4: Include style slider values if any are set
+        // PHASE 4: Include style slider values if any are set.
+        // Only scalar (number | string) fields are forwarded – array fields
+        // such as `references` and `avoid` are intentionally excluded because
+        // the API's style_params map only accepts numeric/string values.
         if (styleProfile && Object.keys(styleProfile).length > 0) {
-          options.styleParams = styleProfile as Record<string, number | string>
+          const styleParams: Record<string, number | string> = {}
+          for (const [key, value] of Object.entries(styleProfile)) {
+            if (typeof value === 'number' || typeof value === 'string') {
+              styleParams[key] = value
+            }
+          }
+          if (Object.keys(styleParams).length > 0) {
+            options.styleParams = styleParams
+          }
         }
       } else {
         // V1: Include preset-based style
