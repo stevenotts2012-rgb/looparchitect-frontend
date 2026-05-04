@@ -1811,3 +1811,177 @@ describe('isGenerating resets to false on ALL terminal job states', () => {
     })
   })
 })
+
+// ===========================================================================
+// Tests: Required state machine tests (problem statement checklist)
+// ===========================================================================
+
+describe('State machine: required behaviors', () => {
+  /**
+   * Helper: render the page with the given loopId pre-set via the URL query
+   * param, then click Generate and flush the async queue.
+   */
+  async function setupAndGenerate(loopIdVal = '1', extraTicks = 4) {
+    await renderPage(loopIdVal)
+    const loopInput = screen.getByRole('spinbutton', { name: /Loop ID/i })
+    await act(async () => {
+      fireEvent.change(loopInput, { target: { value: loopIdVal } })
+    })
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /Generate Arrangement/i }))
+    })
+    await act(async () => {
+      for (let i = 0; i < extraTicks; i++) await Promise.resolve()
+    })
+  }
+
+  it('success status stops generating', async () => {
+    ;(renderLoopAsync as jest.Mock).mockResolvedValue({ job_id: 'job-sm-1' })
+    ;(getJobStatus as jest.Mock).mockResolvedValue({ status: 'success', arrangement_id: 42 })
+    ;(getArrangementStatus as jest.Mock).mockResolvedValue(makeArrangementStatus({ id: 42 }))
+    ;(listArrangements as jest.Mock).mockResolvedValue([makeArrangement({ id: 42 })])
+
+    await setupAndGenerate()
+
+    // The Generate button disappears when arrangementId is set; the
+    // "Generate 3 New Variations" button in the Preview Variations section
+    // must not be disabled (isGenerating=false).
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /Generate 3 New Variations/i })).not.toBeDisabled()
+    })
+  })
+
+  it('job_terminal_state success stops generating', async () => {
+    ;(renderLoopAsync as jest.Mock).mockResolvedValue({ job_id: 'job-sm-2' })
+    // The primary status field is 'processing' – genuinely non-terminal.
+    // Only job_terminal_state signals that the job is done.  This tests
+    // the `effectiveTerminalState === 'success'` branch in pollJob.
+    ;(getJobStatus as jest.Mock).mockResolvedValue({
+      status: 'processing',
+      job_terminal_state: 'success',
+      arrangement_id: 42,
+    })
+    ;(getArrangementStatus as jest.Mock).mockResolvedValue(makeArrangementStatus({ id: 42 }))
+    ;(listArrangements as jest.Mock).mockResolvedValue([makeArrangement({ id: 42 })])
+
+    await setupAndGenerate()
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /Generate 3 New Variations/i })).not.toBeDisabled()
+    })
+  })
+
+  it('arrangement_id fetch renders preview', async () => {
+    const arrangementStatusMock = makeArrangementStatus({ id: 42, status: 'done' })
+    ;(renderLoopAsync as jest.Mock).mockResolvedValue({ job_id: 'job-sm-3' })
+    ;(getJobStatus as jest.Mock).mockResolvedValue({ status: 'finished', arrangement_id: 42 })
+    ;(getArrangementStatus as jest.Mock).mockResolvedValue(arrangementStatusMock)
+    ;(listArrangements as jest.Mock).mockResolvedValue([makeArrangement({ id: 42 })])
+
+    await setupAndGenerate()
+
+    // ArrangementStatus component must appear with the fetched arrangement's status.
+    await waitFor(() => {
+      expect(screen.getByTestId('arrangement-status')).toBeInTheDocument()
+    })
+    expect(screen.getByTestId('arrangement-status')).toHaveAttribute('data-status', 'done')
+    // DownloadButton is shown when arrangementStatus.status is 'done'.
+    expect(screen.getByTestId('download-btn')).toHaveTextContent('42')
+  })
+
+  it('missing arrangement_id falls back to latest by loop_id', async () => {
+    ;(renderLoopAsync as jest.Mock).mockResolvedValue({ job_id: 'job-sm-4' })
+    // Job has no arrangement_id – triggers the listArrangements fallback path.
+    ;(getJobStatus as jest.Mock).mockResolvedValue({
+      status: 'finished',
+      arrangement_id: undefined,
+      candidates: [],
+    })
+    // Two arrangements – the one with the higher id (99) should be selected.
+    ;(listArrangements as jest.Mock).mockResolvedValue([
+      makeArrangement({ id: 5, created_at: '2024-01-05T00:00:00Z' }),
+      makeArrangement({ id: 99, created_at: '2024-01-20T00:00:00Z' }),
+    ])
+    ;(getArrangementStatus as jest.Mock).mockResolvedValue(makeArrangementStatus({ id: 99 }))
+
+    await setupAndGenerate()
+
+    // DownloadButton must appear for the newest arrangement (id=99).
+    await waitFor(() => {
+      expect(screen.getByTestId('download-btn')).toBeInTheDocument()
+    })
+    expect(screen.getByTestId('download-btn')).toHaveTextContent('99')
+    // isGenerating must be cleared.
+    expect(screen.getByRole('button', { name: /Generate 3 New Variations/i })).not.toBeDisabled()
+  })
+
+  it('loadHistory failure does not keep isGenerating true', async () => {
+    ;(renderLoopAsync as jest.Mock).mockResolvedValue({ job_id: 'job-sm-5' })
+    ;(getJobStatus as jest.Mock).mockResolvedValue({ status: 'finished', arrangement_id: 42 })
+    ;(getArrangementStatus as jest.Mock).mockResolvedValue(makeArrangementStatus({ id: 42 }))
+    // listArrangements always rejects so every loadHistory call silently fails.
+    ;(listArrangements as jest.Mock).mockRejectedValue(new Error('DB unavailable'))
+
+    await setupAndGenerate()
+
+    // isGenerating is set to false in the pollJob success handler BEFORE any
+    // loadHistory call, so a failing history load must never keep the UI stuck.
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /Generate 3 New Variations/i })).not.toBeDisabled()
+    })
+  })
+
+  it('timeout clears generating state', async () => {
+    ;(renderLoopAsync as jest.Mock).mockResolvedValue({ job_id: 'job-sm-6' })
+    // Job never reaches a terminal state – always returns processing.
+    ;(getJobStatus as jest.Mock).mockResolvedValue({ status: 'processing' })
+
+    await renderPage('1')
+    const loopInput = screen.getByRole('spinbutton', { name: /Loop ID/i })
+    await act(async () => {
+      fireEvent.change(loopInput, { target: { value: '1' } })
+    })
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /Generate Arrangement/i }))
+    })
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    // Advance past the 90-second safety timeout.
+    await act(async () => {
+      jest.advanceTimersByTime(90_000)
+    })
+
+    await waitFor(() => {
+      expect(screen.getByText(/timed out after 90 seconds/i)).toBeInTheDocument()
+    })
+    // Generate button must be re-enabled after timeout.
+    expect(screen.getByRole('button', { name: /Generate Arrangement/i })).not.toBeDisabled()
+  })
+
+  it('failed job clears generating state and shows error', async () => {
+    ;(renderLoopAsync as jest.Mock).mockResolvedValue({ job_id: 'job-sm-7' })
+    ;(getJobStatus as jest.Mock).mockResolvedValue({
+      status: 'failed',
+      error_message: 'Render worker crashed',
+    })
+
+    await renderPage('1')
+    const loopInput = screen.getByRole('spinbutton', { name: /Loop ID/i })
+    await act(async () => {
+      fireEvent.change(loopInput, { target: { value: '1' } })
+    })
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /Generate Arrangement/i }))
+    })
+    await flushPromises()
+
+    await waitFor(() => {
+      expect(screen.getByText(/Render worker crashed/i)).toBeInTheDocument()
+    })
+    // Generate button must be re-enabled after job failure.
+    expect(screen.getByRole('button', { name: /Generate Arrangement/i })).not.toBeDisabled()
+  })
+})
