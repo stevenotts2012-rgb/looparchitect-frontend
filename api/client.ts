@@ -14,7 +14,7 @@ function getApiBasePath(): string {
     const configured = (process.env.NEXT_PUBLIC_BACKEND_ORIGIN || process.env.NEXT_PUBLIC_API_URL || '').trim();
     if (!configured.startsWith('http://') && !configured.startsWith('https://')) {
       throw new Error(
-        'NEXT_PUBLIC_BACKEND_ORIGIN environment variable is not set. Cannot determine API base path.'
+        'NEXT_PUBLIC_BACKEND_ORIGIN (or NEXT_PUBLIC_API_URL) environment variable is not set or invalid. Cannot determine API base path.'
       );
     }
     return `${configured.replace(/\/$/, '')}/api`;
