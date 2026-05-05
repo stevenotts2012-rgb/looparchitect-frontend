@@ -2203,7 +2203,20 @@ describe('Arrangement-polling done-status gate', () => {
   })
 
   it('re-enables Generate button when arrangement has progress >= 100', async () => {
-    setupDoneGateMocks({ status: 'processing', ...{ progress: 100 } as unknown as object })
+    ;(renderLoopAsync as jest.Mock).mockResolvedValue({ job_id: 'job-progress-100' })
+    ;(getJobStatus as jest.Mock).mockResolvedValue({ status: 'processing' })
+    // Return a processing arrangement that carries progress: 100 at runtime
+    const arrangementWithProgress = Object.assign(
+      makeArrangement({ id: 201, status: 'processing' }),
+      { progress: 100 }
+    )
+    ;(listArrangements as jest.Mock)
+      .mockResolvedValueOnce([])
+      .mockResolvedValue([arrangementWithProgress])
+    ;(getArrangementStatus as jest.Mock).mockResolvedValue(
+      makeArrangementStatus({ id: 201, output_url: 'https://cdn.example.com/201.wav' })
+    )
+    ;(resolveArrangementAudioUrl as jest.Mock).mockReturnValue('https://cdn.example.com/201.wav')
 
     await renderPage('1')
     await clickGenerate()

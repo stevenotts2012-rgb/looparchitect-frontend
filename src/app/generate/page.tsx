@@ -1335,7 +1335,7 @@ export default function GeneratePage() {
             // Only commit to completion when the arrangement is actually done.
             // Keep polling while status is still queued/pending/processing so we
             // don't freeze the button on a half-finished render.
-            const newestStatusStr = (newest.status as string).toUpperCase()
+            const newestStatusStr = (newest.status != null ? (newest.status as string) : '').toUpperCase()
             const newestProgress = (newest as { progress?: number }).progress
             const isDone =
               newestStatusStr === 'DONE' ||
@@ -1359,7 +1359,6 @@ export default function GeneratePage() {
               console.warn('[LoopArchitect] Arrangement polling: failed to fetch status:', statusErr)
             }
             const resolvedAudioUrl = newestStatus ? resolveArrangementAudioUrl(newestStatus) : null
-            clearInterval(arrangementPollingIntervalRef.current ?? undefined)
             setIsGenerating(false)
             setError(null)
             setArrangementId(newest.id)
