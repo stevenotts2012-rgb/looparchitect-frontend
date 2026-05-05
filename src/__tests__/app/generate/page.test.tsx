@@ -2259,3 +2259,106 @@ describe('Arrangement-polling done-status gate', () => {
     expect(btn).toBeDisabled()
   })
 })
+
+// ===========================================================================
+// Tests: Arrangement-polling completes on existing (pre-existing ID) arrangements
+// ===========================================================================
+
+describe('Arrangement-polling accepts existing arrangement IDs', () => {
+  /**
+   * Verify that the UI finishes correctly and the timeout error is cleared when
+   * listArrangements returns an arrangement whose ID was already present in the
+   * history (i.e. the backend reused an existing arrangement row rather than
+   * creating a new one).
+   *
+   * Previously the polling loop filtered out arrangements with beforeIds, which
+   * meant a reused-ID arrangement was never detected as complete and the UI
+   * always showed the timeout error.
+   */
+
+  async function clickGenerate() {
+    const loopInput = screen.getByRole('spinbutton', { name: /Loop ID/i })
+    await act(async () => { fireEvent.change(loopInput, { target: { value: '1' } }) })
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: /Generate Arrangement/i })) })
+    await act(async () => {
+      for (let i = 0; i < 8; i++) await Promise.resolve()
+    })
+  }
+
+  it('finishes UI when existing arrangement ID has status "done"', async () => {
+    // The pre-existing arrangement ID (50) is returned BOTH on the initial
+    // history load AND on subsequent polling ticks.  Its status becomes "done"
+    // on the polling tick – simulating the backend updating the existing row.
+    const existingId = 50
+    ;(renderLoopAsync as jest.Mock).mockResolvedValue({ job_id: 'job-existing-id' })
+    ;(getJobStatus as jest.Mock).mockResolvedValue({ status: 'processing' })
+    ;(listArrangements as jest.Mock)
+      .mockResolvedValueOnce([makeArrangement({ id: existingId, status: 'processing' })]) // initial history load
+      .mockResolvedValue([makeArrangement({ id: existingId, status: 'done' })])           // polling ticks
+    ;(getArrangementStatus as jest.Mock).mockResolvedValue(
+      makeArrangementStatus({ id: existingId, output_url: `https://cdn.example.com/${existingId}.wav` })
+    )
+    ;(resolveArrangementAudioUrl as jest.Mock).mockReturnValue(
+      `https://cdn.example.com/${existingId}.wav`
+    )
+
+    await renderPage('1')
+    await clickGenerate()
+
+    // UI should be out of generating state and show the Preview Variations section.
+    await waitFor(() => {
+      expect(screen.getByText(/Preview Variations/i)).toBeInTheDocument()
+    })
+    expect(screen.getByRole('button', { name: /Generate 3 New Variations/i })).not.toBeDisabled()
+  })
+
+  it('clears the timeout error when existing arrangement ID has progress >= 100', async () => {
+    const existingId = 51
+    const arrangementWithProgress = Object.assign(
+      makeArrangement({ id: existingId, status: 'processing' }),
+      { progress: 100 }
+    )
+    ;(renderLoopAsync as jest.Mock).mockResolvedValue({ job_id: 'job-existing-progress' })
+    ;(getJobStatus as jest.Mock).mockResolvedValue({ status: 'processing' })
+    ;(listArrangements as jest.Mock)
+      .mockResolvedValueOnce([makeArrangement({ id: existingId, status: 'processing' })]) // initial history
+      .mockResolvedValue([arrangementWithProgress])                                        // polling ticks
+    ;(getArrangementStatus as jest.Mock).mockResolvedValue(
+      makeArrangementStatus({ id: existingId, output_url: `https://cdn.example.com/${existingId}.wav` })
+    )
+    ;(resolveArrangementAudioUrl as jest.Mock).mockReturnValue(
+      `https://cdn.example.com/${existingId}.wav`
+    )
+
+    await renderPage('1')
+    await clickGenerate()
+
+    await waitFor(() => {
+      expect(screen.getByText(/Preview Variations/i)).toBeInTheDocument()
+    })
+    expect(screen.getByRole('button', { name: /Generate 3 New Variations/i })).not.toBeDisabled()
+  })
+
+  it('emits COMPLETED_ARRANGEMENT_ACCEPTED log when existing arrangement finishes', async () => {
+    const existingId = 52
+    ;(renderLoopAsync as jest.Mock).mockResolvedValue({ job_id: 'job-existing-log' })
+    ;(getJobStatus as jest.Mock).mockResolvedValue({ status: 'processing' })
+    ;(listArrangements as jest.Mock)
+      .mockResolvedValueOnce([makeArrangement({ id: existingId, status: 'processing' })])
+      .mockResolvedValue([makeArrangement({ id: existingId, status: 'done' })])
+    ;(getArrangementStatus as jest.Mock).mockResolvedValue(
+      makeArrangementStatus({ id: existingId })
+    )
+    ;(resolveArrangementAudioUrl as jest.Mock).mockReturnValue(null)
+
+    await renderPage('1')
+    await clickGenerate()
+
+    await waitFor(() => {
+      expect(console.log).toHaveBeenCalledWith(
+        'COMPLETED_ARRANGEMENT_ACCEPTED',
+        expect.objectContaining({ id: existingId, status: 'done' })
+      )
+    })
+  })
+})

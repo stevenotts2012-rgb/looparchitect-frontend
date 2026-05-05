@@ -1286,10 +1286,6 @@ export default function GeneratePage() {
       }
 
       // Dispatch async render job – the job-polling useEffect takes over from here.
-      // Capture existing arrangement IDs BEFORE dispatching so the arrangement-
-      // polling path can detect only newly-created arrangements.
-      const beforeIds = new Set(historyRows.map((a) => a.id))
-
       console.log("GENERATE_STARTED", { loopId, options })
       console.log('render_async_started', { loop_id: loopIdNum })
       const renderResponse = await renderLoopAsync(loopIdNum, options)
@@ -1326,22 +1322,24 @@ export default function GeneratePage() {
         try {
           const arrangements = await listArrangements({ loopId: loopIdNum })
           console.log("ARRANGEMENT_POLL_TICK", arrangements)
-          const newArrangements = arrangements
-            .filter((a) => !beforeIds.has(a.id))
-            .sort((a, b) => b.id - a.id)
-          if (newArrangements.length > 0) {
-            const newest = newArrangements[0]
+          // Sort all arrangements newest first (by id descending) and pick the
+          // first one that is complete. We do not filter by beforeIds so that
+          // the backend can reuse / update an existing arrangement row without
+          // the UI missing the completion signal.
+          const sortedArrangements = arrangements.slice().sort((a, b) => b.id - a.id)
+          const doneArrangement = sortedArrangements.find((a) => {
+            const statusStr = (a.status != null ? (a.status as string) : '').toUpperCase()
+            const progress = (a as { progress?: number }).progress
+            return (
+              statusStr === 'DONE' ||
+              statusStr === 'COMPLETED' ||
+              (progress !== undefined && progress >= 100)
+            )
+          })
+          if (doneArrangement) {
+            const newest = doneArrangement
             console.log("ARRANGEMENT_FOUND", newest)
-            // Only commit to completion when the arrangement is actually done.
-            // Keep polling while status is still queued/pending/processing so we
-            // don't freeze the button on a half-finished render.
-            const newestStatusStr = (newest.status != null ? (newest.status as string) : '').toUpperCase()
-            const newestProgress = (newest as { progress?: number }).progress
-            const isDone =
-              newestStatusStr === 'DONE' ||
-              newestStatusStr === 'COMPLETED' ||
-              (newestProgress !== undefined && newestProgress >= 100)
-            if (!isDone) return
+            console.log("COMPLETED_ARRANGEMENT_ACCEPTED", newest)
             // JavaScript is single-threaded: the check and the assignment below
             // are synchronous with no await between them, so this is effectively
             // atomic – no other callback can interleave between these two lines.
