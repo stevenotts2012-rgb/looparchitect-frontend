@@ -1227,7 +1227,7 @@ export async function renderLoopAsync(
     }
 
     const requestBody: Record<string, unknown> = {
-      target_seconds: targetSeconds,
+      target_length_seconds: targetSeconds,
     };
 
     if (options?.genre) requestBody.genre = options.genre;

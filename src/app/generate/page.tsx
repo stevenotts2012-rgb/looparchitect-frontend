@@ -1287,6 +1287,7 @@ export default function GeneratePage() {
 
       // Dispatch async render job – the job-polling useEffect takes over from here.
       console.log("GENERATE_STARTED", { loopId, options })
+      console.log("GENERATE_REQUEST_BODY", { loop_id: loopIdNum, ...options })
       console.log('render_async_started', { loop_id: loopIdNum })
       const renderResponse = await renderLoopAsync(loopIdNum, options)
       console.log('RENDER_ASYNC_RESPONSE', renderResponse)
@@ -2155,6 +2156,12 @@ export default function GeneratePage() {
                   {isGenerating ? 'Generating...' : 'Generate 3 New Variations'}
                 </button>
               </div>
+
+              {previewCandidates.length === 1 && (
+                <p className="text-sm text-amber-400" role="alert">
+                  Only one variation returned by backend.
+                </p>
+              )}
 
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 {previewCandidates.map((candidate) => {

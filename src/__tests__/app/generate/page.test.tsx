@@ -2362,3 +2362,150 @@ describe('Arrangement-polling accepts existing arrangement IDs', () => {
     })
   })
 })
+
+// ===========================================================================
+// Tests: Generate request body correctness
+// ===========================================================================
+
+describe('Generate request body correctness', () => {
+  /** Click the Generate button (filling Loop ID 1 first if not pre-filled). */
+  async function clickGenerate() {
+    const loopInput = screen.getByRole('spinbutton', { name: /Loop ID/i })
+    await act(async () => { fireEvent.change(loopInput, { target: { value: '1' } }) })
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /Generate Arrangement/i }))
+    })
+    await flushPromises()
+  }
+
+  beforeEach(() => {
+    ;(renderLoopAsync as jest.Mock).mockResolvedValue({ job_id: 'job-body-test' })
+    ;(getJobStatus as jest.Mock).mockResolvedValue({ status: 'processing' })
+    ;(listArrangements as jest.Mock).mockResolvedValue([])
+  })
+
+  it('emits GENERATE_REQUEST_BODY console log when Generate is clicked', async () => {
+    await renderPage('1')
+    await clickGenerate()
+
+    await waitFor(() => {
+      expect(console.log).toHaveBeenCalledWith(
+        'GENERATE_REQUEST_BODY',
+        expect.objectContaining({ loop_id: 1 })
+      )
+    })
+  })
+
+  it('sends target_length_seconds: 180 when duration mode is set to 180', async () => {
+    await renderPage('1')
+
+    // Switch to duration mode and set 180 seconds
+    const durationButton = screen.getByRole('button', { name: /By Duration/i })
+    await act(async () => { fireEvent.click(durationButton) })
+
+    const durationInput = screen.getByLabelText(/Duration \(seconds\)/i)
+    await act(async () => { fireEvent.change(durationInput, { target: { value: '180' } }) })
+
+    await clickGenerate()
+
+    await waitFor(() => {
+      expect(renderLoopAsync).toHaveBeenCalledWith(
+        1,
+        expect.objectContaining({ duration: 180 })
+      )
+    })
+
+    // Verify the GENERATE_REQUEST_BODY log carries duration: 180
+    await waitFor(() => {
+      expect(console.log).toHaveBeenCalledWith(
+        'GENERATE_REQUEST_BODY',
+        expect.objectContaining({ duration: 180 })
+      )
+    })
+  })
+
+  it('sends variation_count=3 in the renderLoopAsync call', async () => {
+    await renderPage('1')
+    await clickGenerate()
+
+    await waitFor(() => {
+      expect(renderLoopAsync).toHaveBeenCalledWith(
+        1,
+        expect.objectContaining({ variationCount: 3 })
+      )
+    })
+  })
+})
+
+// ===========================================================================
+// Tests: Multiple candidates render as multiple cards
+// ===========================================================================
+
+describe('Multiple candidates render as multiple cards', () => {
+  it('renders a card for each candidate when backend returns multiple candidates', async () => {
+    const candidates = [
+      { arrangement_id: 201, status: 'done', created_at: '2024-01-15T10:00:00Z' },
+      { arrangement_id: 202, status: 'done', created_at: '2024-01-15T10:01:00Z' },
+      { arrangement_id: 203, status: 'done', created_at: '2024-01-15T10:02:00Z' },
+    ]
+    ;(renderLoopAsync as jest.Mock).mockResolvedValue({ job_id: 'job-multi' })
+    ;(getJobStatus as jest.Mock).mockResolvedValue({
+      status: 'finished',
+      candidates,
+    })
+    ;(getArrangementStatus as jest.Mock).mockImplementation(
+      (id: number) => Promise.resolve(makeArrangementStatus({ id }))
+    )
+    ;(listArrangements as jest.Mock).mockResolvedValue(
+      candidates.map((c) => makeArrangement({ id: c.arrangement_id, status: 'done' }))
+    )
+    ;(resolveArrangementAudioUrl as jest.Mock).mockReturnValue(null)
+
+    await renderPage('1')
+
+    const loopInput = screen.getByRole('spinbutton', { name: /Loop ID/i })
+    await act(async () => { fireEvent.change(loopInput, { target: { value: '1' } }) })
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /Generate Arrangement/i }))
+    })
+    await flushPromises()
+
+    await waitFor(() => {
+      expect(screen.getByText(/Preview Variations/i)).toBeInTheDocument()
+    })
+
+    // Each candidate should appear as its own card
+    expect(screen.getByText(/Variation #201/i)).toBeInTheDocument()
+    expect(screen.getByText(/Variation #202/i)).toBeInTheDocument()
+    expect(screen.getByText(/Variation #203/i)).toBeInTheDocument()
+  })
+
+  it('shows "Only one variation returned by backend." warning when only one candidate is present', async () => {
+    const candidate = { arrangement_id: 301, status: 'done', created_at: '2024-01-15T10:00:00Z' }
+    ;(renderLoopAsync as jest.Mock).mockResolvedValue({ job_id: 'job-single' })
+    ;(getJobStatus as jest.Mock).mockResolvedValue({
+      status: 'finished',
+      candidates: [candidate],
+    })
+    ;(getArrangementStatus as jest.Mock).mockResolvedValue(
+      makeArrangementStatus({ id: candidate.arrangement_id })
+    )
+    ;(listArrangements as jest.Mock).mockResolvedValue(
+      [makeArrangement({ id: candidate.arrangement_id, status: 'done' })]
+    )
+    ;(resolveArrangementAudioUrl as jest.Mock).mockReturnValue(null)
+
+    await renderPage('1')
+
+    const loopInput = screen.getByRole('spinbutton', { name: /Loop ID/i })
+    await act(async () => { fireEvent.change(loopInput, { target: { value: '1' } }) })
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /Generate Arrangement/i }))
+    })
+    await flushPromises()
+
+    await waitFor(() => {
+      expect(screen.getByText(/Only one variation returned by backend\./i)).toBeInTheDocument()
+    })
+  })
+})
