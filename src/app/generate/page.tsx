@@ -1332,6 +1332,16 @@ export default function GeneratePage() {
           if (newArrangements.length > 0) {
             const newest = newArrangements[0]
             console.log("ARRANGEMENT_FOUND", newest)
+            // Only commit to completion when the arrangement is actually done.
+            // Keep polling while status is still queued/pending/processing so we
+            // don't freeze the button on a half-finished render.
+            const newestStatusStr = (newest.status != null ? (newest.status as string) : '').toUpperCase()
+            const newestProgress = (newest as { progress?: number }).progress
+            const isDone =
+              newestStatusStr === 'DONE' ||
+              newestStatusStr === 'COMPLETED' ||
+              (newestProgress !== undefined && newestProgress >= 100)
+            if (!isDone) return
             // JavaScript is single-threaded: the check and the assignment below
             // are synchronous with no await between them, so this is effectively
             // atomic – no other callback can interleave between these two lines.
@@ -1350,6 +1360,7 @@ export default function GeneratePage() {
             }
             const resolvedAudioUrl = newestStatus ? resolveArrangementAudioUrl(newestStatus) : null
             setIsGenerating(false)
+            setError(null)
             setArrangementId(newest.id)
             if (newestStatus) setArrangementStatus(newestStatus)
             if (resolvedAudioUrl) setAudioUrl(resolvedAudioUrl)
@@ -1361,7 +1372,7 @@ export default function GeneratePage() {
               created_at: newest.created_at ?? new Date().toISOString(),
             }])
             setSelectedPreviewId(newest.id)
-            setError(null)
+            console.log("GENERATE_BUTTON_RESET_AFTER_DONE", newest)
             console.log("GENERATE_UI_COMPLETE")
           }
         } catch {

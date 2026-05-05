@@ -2159,3 +2159,103 @@ describe('Arrangement-polling completion path', () => {
     })
   })
 })
+
+// ===========================================================================
+// Tests: Arrangement-polling done-status gate (problem statement fix)
+// ===========================================================================
+
+describe('Arrangement-polling done-status gate', () => {
+  /**
+   * Set up mocks where job polling never reaches a terminal state, so only
+   * arrangement polling can reset the Generate button.
+   */
+  function setupDoneGateMocks(arrangement: Partial<ReturnType<typeof makeArrangement>> = {}) {
+    ;(renderLoopAsync as jest.Mock).mockResolvedValue({ job_id: 'job-done-gate' })
+    ;(getJobStatus as jest.Mock).mockResolvedValue({ status: 'processing' })
+    ;(listArrangements as jest.Mock)
+      .mockResolvedValueOnce([])                                     // initial history load
+      .mockResolvedValue([makeArrangement({ id: 200, ...arrangement })])
+    ;(getArrangementStatus as jest.Mock).mockResolvedValue(
+      makeArrangementStatus({ id: 200, output_url: 'https://cdn.example.com/200.wav' })
+    )
+    ;(resolveArrangementAudioUrl as jest.Mock).mockReturnValue('https://cdn.example.com/200.wav')
+  }
+
+  async function clickGenerate() {
+    const loopInput = screen.getByRole('spinbutton', { name: /Loop ID/i })
+    await act(async () => { fireEvent.change(loopInput, { target: { value: '1' } }) })
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: /Generate Arrangement/i })) })
+    await act(async () => {
+      for (let i = 0; i < 8; i++) await Promise.resolve()
+    })
+  }
+
+  it('re-enables Generate button when arrangement polling finds status "done"', async () => {
+    setupDoneGateMocks({ status: 'done' })
+
+    await renderPage('1')
+    await clickGenerate()
+
+    await waitFor(() => {
+      expect(screen.getByText(/Preview Variations/i)).toBeInTheDocument()
+    })
+    expect(screen.getByRole('button', { name: /Generate 3 New Variations/i })).not.toBeDisabled()
+  })
+
+  it('re-enables Generate button when arrangement has progress >= 100', async () => {
+    ;(renderLoopAsync as jest.Mock).mockResolvedValue({ job_id: 'job-progress-100' })
+    ;(getJobStatus as jest.Mock).mockResolvedValue({ status: 'processing' })
+    // Return a processing arrangement that carries progress: 100 at runtime
+    const arrangementWithProgress = Object.assign(
+      makeArrangement({ id: 201, status: 'processing' }),
+      { progress: 100 }
+    )
+    ;(listArrangements as jest.Mock)
+      .mockResolvedValueOnce([])
+      .mockResolvedValue([arrangementWithProgress])
+    ;(getArrangementStatus as jest.Mock).mockResolvedValue(
+      makeArrangementStatus({ id: 201, output_url: 'https://cdn.example.com/201.wav' })
+    )
+    ;(resolveArrangementAudioUrl as jest.Mock).mockReturnValue('https://cdn.example.com/201.wav')
+
+    await renderPage('1')
+    await clickGenerate()
+
+    await waitFor(() => {
+      expect(screen.getByText(/Preview Variations/i)).toBeInTheDocument()
+    })
+    expect(screen.getByRole('button', { name: /Generate 3 New Variations/i })).not.toBeDisabled()
+  })
+
+  it('emits GENERATE_BUTTON_RESET_AFTER_DONE log when arrangement is done', async () => {
+    setupDoneGateMocks({ status: 'done' })
+
+    await renderPage('1')
+    await clickGenerate()
+
+    await waitFor(() => {
+      expect(console.log).toHaveBeenCalledWith(
+        'GENERATE_BUTTON_RESET_AFTER_DONE',
+        expect.objectContaining({ id: 200, status: 'done' })
+      )
+    })
+  })
+
+  it('does not reset button when arrangement status is still "processing"', async () => {
+    ;(renderLoopAsync as jest.Mock).mockResolvedValue({ job_id: 'job-still-processing' })
+    ;(getJobStatus as jest.Mock).mockResolvedValue({ status: 'processing' })
+    ;(listArrangements as jest.Mock)
+      .mockResolvedValueOnce([])
+      .mockResolvedValue([makeArrangement({ id: 300, status: 'processing' })])
+    ;(getArrangementStatus as jest.Mock).mockResolvedValue(
+      makeArrangementStatus({ id: 300, status: 'processing' })
+    )
+
+    await renderPage('1')
+    await clickGenerate()
+
+    // Button must remain disabled: polling found arrangement but it's not done yet.
+    const btn = screen.getByRole('button', { name: /Generating\.\.\./i })
+    expect(btn).toBeDisabled()
+  })
+})
