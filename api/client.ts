@@ -11,17 +11,21 @@ function getApiBasePath(): string {
   //   Staging:    https://web-staging-cb7b.up.railway.app
   //   Production: https://web-production-3afc5.up.railway.app
   if (typeof window !== 'undefined') {
-    const configured = (process.env.NEXT_PUBLIC_BACKEND_ORIGIN || process.env.NEXT_PUBLIC_API_URL || '').trim();
+    // Browser: use ONLY NEXT_PUBLIC_BACKEND_ORIGIN – no fallback to
+    // NEXT_PUBLIC_API_URL which may point to the Vercel frontend and cause
+    // requests to be silently routed through the Next.js proxy instead of
+    // going directly to the Railway backend.
+    const configured = (process.env.NEXT_PUBLIC_BACKEND_ORIGIN || '').trim();
     if (!configured.startsWith('http://') && !configured.startsWith('https://')) {
       throw new Error(
-        'NEXT_PUBLIC_BACKEND_ORIGIN (or NEXT_PUBLIC_API_URL) environment variable is not set or invalid. Cannot determine API base path.'
+        'NEXT_PUBLIC_BACKEND_ORIGIN environment variable is not set or invalid. Cannot determine API base path.'
       );
     }
     return `${configured.replace(/\/$/, '')}/api`;
   }
 
   // Server-side (e.g. SSR or API routes): resolve the backend origin directly.
-  const configured = (process.env.BACKEND_ORIGIN || process.env.NEXT_PUBLIC_API_URL || '').trim();
+  const configured = (process.env.BACKEND_ORIGIN || '').trim();
   if (configured.startsWith('http://') || configured.startsWith('https://')) {
     return `${configured.replace(/\/$/, '')}/api`;
   }
@@ -58,9 +62,9 @@ function getUploadUrl(path: string): string {
   }
 
   // Browser: go directly to the backend, skipping the Vercel proxy.
-  // NEXT_PUBLIC_BACKEND_ORIGIN (preferred) or NEXT_PUBLIC_API_URL are inlined
-  // at build time by Next.js so they are safe to reference here.
-  const configured = (process.env.NEXT_PUBLIC_BACKEND_ORIGIN || process.env.NEXT_PUBLIC_API_URL || '').trim();
+  // Use ONLY NEXT_PUBLIC_BACKEND_ORIGIN – no fallback to NEXT_PUBLIC_API_URL
+  // which may point to the Vercel frontend and silently route through the proxy.
+  const configured = (process.env.NEXT_PUBLIC_BACKEND_ORIGIN || '').trim();
   if (!configured.startsWith('http://') && !configured.startsWith('https://')) {
     throw new Error(
       'NEXT_PUBLIC_BACKEND_ORIGIN environment variable is not set. Cannot determine upload URL.'
@@ -86,7 +90,9 @@ function getDirectBackendUrl(path: string): string {
   }
 
   // Browser: bypass the Vercel proxy and go directly to the Railway backend.
-  const configured = (process.env.NEXT_PUBLIC_BACKEND_ORIGIN || process.env.NEXT_PUBLIC_API_URL || '').trim();
+  // Use ONLY NEXT_PUBLIC_BACKEND_ORIGIN – no fallback to NEXT_PUBLIC_API_URL
+  // which may point to the Vercel frontend and silently route through the proxy.
+  const configured = (process.env.NEXT_PUBLIC_BACKEND_ORIGIN || '').trim();
   if (!configured.startsWith('http://') && !configured.startsWith('https://')) {
     throw new Error(
       'NEXT_PUBLIC_BACKEND_ORIGIN environment variable is not set. Cannot determine backend URL.'
@@ -953,6 +959,7 @@ export async function uploadLoop(file: File | File[]): Promise<LoopResponse> {
     const uploadUrl = getUploadUrl('/v1/loops/with-file');
     const totalSizeBytes = files.reduce((sum, f) => sum + f.size, 0);
 
+    console.log("API_CALL", uploadUrl);
     console.debug('[upload] starting', {
       url: uploadUrl,
       mode: uploadMode,
@@ -1113,6 +1120,7 @@ export async function analyzeReferenceTrack(
     formData.append('file', file);
 
     const url = getUploadUrl('/v1/reference/analyze');
+    console.log("API_CALL", url);
     const response = await fetch(url, {
       method: 'POST',
       // No Content-Type header – browser sets multipart/form-data with boundary.
