@@ -4,15 +4,20 @@
 
 // We need to control window availability. Import after setting up environment.
 
+const RAILWAY_ORIGIN = 'https://web-production-3afc5.up.railway.app'
+
 describe('src/lib/api.ts – browser environment (window defined)', () => {
-  // window is defined in jsdom, so getApiBasePath() should return '/api'
+  // window is defined in jsdom, so getApiBasePath() resolves via NEXT_PUBLIC_BACKEND_ORIGIN
+  // and goes directly to the Railway backend (no Vercel proxy).
 
   beforeEach(() => {
+    process.env.NEXT_PUBLIC_BACKEND_ORIGIN = RAILWAY_ORIGIN
     jest.spyOn(console, 'log').mockImplementation(() => {})
     jest.spyOn(console, 'error').mockImplementation(() => {})
   })
 
   afterEach(() => {
+    delete process.env.NEXT_PUBLIC_BACKEND_ORIGIN
     jest.restoreAllMocks()
   })
 

@@ -3,24 +3,25 @@
 // are an older, partial copy of the functions in api/client.ts.
 //
 // For new code – and especially for ANY upload logic – always import from
-// api/client.ts.  The `getApiBasePath` below returns a relative "/api" path
-// for browser calls, which routes through the Vercel proxy.  That is
-// intentional for lightweight JSON requests but MUST NOT be used for
-// multipart uploads: Vercel's body-size limit causes 413 errors and the proxy
-// adds x-correlation-id, triggering a CORS preflight that blocks uploads.
-//
-// Upload URL resolution lives exclusively in `getUploadUrl()` in api/client.ts.
+// api/client.ts.
 
 function getApiBasePath(): string {
-  // In the browser, use a relative path so all API calls are routed through
-  // the Next.js API proxy route (src/app/api/[...path]/route.ts), which then
-  // forwards the request to the backend on the server side. This avoids CORS
-  // issues because the browser never makes a request directly to the backend.
+  // Always bypass the Next.js/Vercel proxy and go directly to the Railway
+  // backend, both in the browser and server-side.  This ensures that all API
+  // calls hit the same backend where render jobs run, so results are never
+  // missed due to proxy caching or routing differences.
   //
-  // NOTE: This path must NEVER be used for multipart uploads – see the
-  // deprecation notice at the top of this file.
+  // NEXT_PUBLIC_BACKEND_ORIGIN must be set at build time in Vercel:
+  //   Staging:    https://web-staging-cb7b.up.railway.app
+  //   Production: https://web-production-3afc5.up.railway.app
   if (typeof window !== 'undefined') {
-    return '/api'
+    const configured = (process.env.NEXT_PUBLIC_BACKEND_ORIGIN || process.env.NEXT_PUBLIC_API_URL || '').trim()
+    if (configured.startsWith('http://') || configured.startsWith('https://')) {
+      return `${configured.replace(/\/$/, '')}/api`
+    }
+    throw new Error(
+      'NEXT_PUBLIC_BACKEND_ORIGIN (or NEXT_PUBLIC_API_URL) environment variable is not set or invalid. Cannot determine API base path.'
+    )
   }
 
   // Server-side: resolve the backend origin directly.
@@ -98,7 +99,20 @@ export async function fetchLoopPlayUrl(loopId: number): Promise<string> {
  * @returns Promise resolving to loop list
  */
 export async function fetchLoops(): Promise<LoopResponse[]> {
-  return apiFetch<LoopResponse[]>('/v1/loops')
+  const url = apiUrl('/v1/loops')
+  console.log("API_CALL", url)
+  const response = await fetch(url, {
+    method: 'GET',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+  })
+
+  if (!response.ok) {
+    throw new Error(`API Error: ${response.status} ${response.statusText}`)
+  }
+
+  return response.json()
 }
 
 /**
@@ -113,6 +127,7 @@ export async function apiFetch<T>(
 ): Promise<T> {
   const apiEndpoint = endpoint.startsWith('/api/') ? endpoint.replace(/^\/api/, '') : endpoint
   const url = apiUrl(apiEndpoint)
+  console.log("API_CALL", url)
   
   try {
     const response = await fetch(url, {
