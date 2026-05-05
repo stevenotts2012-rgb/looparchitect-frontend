@@ -15,17 +15,21 @@ function getApiBasePath(): string {
   //   Staging:    https://web-staging-cb7b.up.railway.app
   //   Production: https://web-production-3afc5.up.railway.app
   if (typeof window !== 'undefined') {
-    const configured = (process.env.NEXT_PUBLIC_BACKEND_ORIGIN || process.env.NEXT_PUBLIC_API_URL || '').trim()
+    // Browser: use ONLY NEXT_PUBLIC_BACKEND_ORIGIN – no fallback to
+    // NEXT_PUBLIC_API_URL which may point to the Vercel frontend and cause
+    // requests to be silently routed through the Next.js proxy instead of
+    // going directly to the Railway backend.
+    const configured = (process.env.NEXT_PUBLIC_BACKEND_ORIGIN || '').trim()
     if (configured.startsWith('http://') || configured.startsWith('https://')) {
       return `${configured.replace(/\/$/, '')}/api`
     }
     throw new Error(
-      'NEXT_PUBLIC_BACKEND_ORIGIN (or NEXT_PUBLIC_API_URL) environment variable is not set or invalid. Cannot determine API base path.'
+      'NEXT_PUBLIC_BACKEND_ORIGIN environment variable is not set or invalid. Cannot determine API base path.'
     )
   }
 
   // Server-side: resolve the backend origin directly.
-  const configured = (process.env.BACKEND_ORIGIN || process.env.NEXT_PUBLIC_API_URL || '').trim()
+  const configured = (process.env.BACKEND_ORIGIN || '').trim()
   if (configured.startsWith('http://') || configured.startsWith('https://')) {
     return `${configured.replace(/\/$/, '')}/api`
   }
