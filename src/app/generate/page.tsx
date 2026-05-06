@@ -164,6 +164,7 @@ export default function GeneratePage() {
   // handlers from surfacing stale errors after a successful completion.
   const generationCompletedRef = useRef(false)
   const history422LoopRef = useRef<string | null>(null)
+  const terminalJobIdsRef = useRef<Set<string>>(new Set())
 
   const clearPreviewCandidates = () => {
     setPreviewCandidates((current) => {
@@ -1162,7 +1163,7 @@ export default function GeneratePage() {
       return
     }
 
-    console.log('GENERATE_CLICKED', loopId)
+    console.log('FRONTEND_GENERATE_START', { ts: new Date().toISOString(), loop_id: loopId })
 
     setIsGenerating(true)
     generationCompletedRef.current = false
@@ -1347,6 +1348,10 @@ export default function GeneratePage() {
       }
 
       console.log('JOB_IDS_EXTRACTED', { job_ids: jobIds, loop_id: loopIdNum })
+      jobIds.forEach((jobId) => {
+        console.log('FRONTEND_JOB_REGISTERED', { ts: new Date().toISOString(), job_id: jobId })
+      })
+      terminalJobIdsRef.current = new Set()
       setCurrentJobIds(jobIds)
       setCurrentJobId(jobIds[0])
       jobDispatched = true
