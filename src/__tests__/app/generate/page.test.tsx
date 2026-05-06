@@ -2246,3 +2246,41 @@ describe('Multiple candidates render as multiple cards', () => {
     })
   })
 })
+
+describe('render-async job id extraction bootstrap', () => {
+  it('shows readable error and does not poll when no job ids are returned', async () => {
+    ;(renderLoopAsync as jest.Mock).mockResolvedValue({ ok: true })
+
+    await renderPage('1')
+    const loopInput = screen.getByRole('spinbutton', { name: /Loop ID/i })
+    await act(async () => { fireEvent.change(loopInput, { target: { value: '1' } }) })
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /Generate Arrangement/i }))
+    })
+    await flushPromises()
+
+    await waitFor(() => {
+      expect(screen.getByText(/Render started but no job ID was returned\./i)).toBeInTheDocument()
+    })
+    expect(getJobStatus).not.toHaveBeenCalled()
+    expect(console.error).toHaveBeenCalledWith('RENDER_RESPONSE_NO_JOB_IDS', expect.any(Object))
+  })
+
+  it('starts polling when response shape is { id: ... }', async () => {
+    ;(renderLoopAsync as jest.Mock).mockResolvedValue({ id: 'job-from-id' })
+    ;(getJobStatus as jest.Mock).mockResolvedValue({ status: 'running' })
+
+    await renderPage('1')
+    const loopInput = screen.getByRole('spinbutton', { name: /Loop ID/i })
+    await act(async () => { fireEvent.change(loopInput, { target: { value: '1' } }) })
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /Generate Arrangement/i }))
+    })
+    await flushPromises()
+
+    await waitFor(() => {
+      expect(getJobStatus).toHaveBeenCalledWith('job-from-id')
+    })
+    expect(console.log).toHaveBeenCalledWith('JOB_IDS_EXTRACTED', expect.objectContaining({ job_ids: ['job-from-id'] }))
+  })
+})
