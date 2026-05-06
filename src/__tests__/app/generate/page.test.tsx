@@ -2248,6 +2248,47 @@ describe('Multiple candidates render as multiple cards', () => {
 })
 
 describe('render-async job id extraction bootstrap', () => {
+
+  it('emits FRONTEND_GENERATE_START with loop_id and timestamp', async () => {
+    ;(renderLoopAsync as jest.Mock).mockResolvedValue({ job_id: 'job-start-log' })
+    ;(getJobStatus as jest.Mock).mockResolvedValue({ status: 'running' })
+
+    await renderPage('1')
+    const loopInput = screen.getByRole('spinbutton', { name: /Loop ID/i })
+    await act(async () => { fireEvent.change(loopInput, { target: { value: '1' } }) })
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /Generate Arrangement/i }))
+    })
+    await flushPromises()
+
+    expect(console.log).toHaveBeenCalledWith(
+      'FRONTEND_GENERATE_START',
+      expect.objectContaining({ loop_id: 1, timestamp: expect.any(String) })
+    )
+  })
+
+  it('emits FRONTEND_JOB_REGISTERED for each extracted job id', async () => {
+    ;(renderLoopAsync as jest.Mock).mockResolvedValue({ job_ids: ['job-a', 'job-b'] })
+    ;(getJobStatus as jest.Mock).mockResolvedValue({ status: 'running' })
+
+    await renderPage('1')
+    const loopInput = screen.getByRole('spinbutton', { name: /Loop ID/i })
+    await act(async () => { fireEvent.change(loopInput, { target: { value: '1' } }) })
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /Generate Arrangement/i }))
+    })
+    await flushPromises()
+
+    expect(console.log).toHaveBeenCalledWith(
+      'FRONTEND_JOB_REGISTERED',
+      expect.objectContaining({ loop_id: 1, job_id: 'job-a', timestamp: expect.any(String) })
+    )
+    expect(console.log).toHaveBeenCalledWith(
+      'FRONTEND_JOB_REGISTERED',
+      expect.objectContaining({ loop_id: 1, job_id: 'job-b', timestamp: expect.any(String) })
+    )
+  })
+
   it('shows readable error and does not poll when no job ids are returned', async () => {
     ;(renderLoopAsync as jest.Mock).mockResolvedValue({ ok: true })
 
