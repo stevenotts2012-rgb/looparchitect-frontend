@@ -48,6 +48,7 @@ import ReferenceTrackPanel, { type AdaptationStrength, type GuidanceMode } from 
 import { ReferenceGuidancePanel } from '@/components/ReferenceGuidancePanel'
 import { SectionStateBadge, deriveSectionState } from '@/components/SectionStateBadge'
 import { SimpleStyleProfile } from '@/lib/styleSchema'
+import { extractJobIds } from '@/lib/extractJobIds'
 
 export default function GeneratePage() {
   type PreviewCandidateState = ArrangementPreviewCandidate & {
@@ -134,6 +135,7 @@ export default function GeneratePage() {
   })
 
   const [currentJobId, setCurrentJobId] = useState<string | null>(null)
+  const [currentJobIds, setCurrentJobIds] = useState<string[]>([])
 
   const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null)
   const pollingErrorCountRef = useRef<number>(0)
@@ -161,6 +163,7 @@ export default function GeneratePage() {
   // path transitions the UI out of "generating" state.  Prevents timeout
   // handlers from surfacing stale errors after a successful completion.
   const generationCompletedRef = useRef(false)
+  const terminalJobIdsRef = useRef<Set<string>>(new Set())
   const history422LoopRef = useRef<string | null>(null)
 
   const clearPreviewCandidates = () => {
@@ -176,6 +179,46 @@ export default function GeneratePage() {
     // Reset per-candidate download attempt counters so a fresh generation starts
     // with a clean slate.
     candidateDownloadAttemptsRef.current.clear()
+  }
+
+
+  const stopAllPolling = useCallback(() => {
+    if (jobPollingIntervalRef.current) {
+      clearInterval(jobPollingIntervalRef.current)
+      jobPollingIntervalRef.current = null
+    }
+    if (pollingIntervalRef.current) {
+      clearInterval(pollingIntervalRef.current)
+      pollingIntervalRef.current = null
+    }
+    if (candidatesIntervalRef.current) {
+      clearInterval(candidatesIntervalRef.current)
+      candidatesIntervalRef.current = null
+    }
+    if (arrangementPollingIntervalRef.current) {
+      clearInterval(arrangementPollingIntervalRef.current)
+      arrangementPollingIntervalRef.current = null
+    }
+    if (arrangementPollingTimeoutRef.current) {
+      clearTimeout(arrangementPollingTimeoutRef.current)
+      arrangementPollingTimeoutRef.current = null
+    }
+    console.log('FRONTEND_POLL_STOP')
+  }, [])
+
+  const finalizeGeneration = useCallback(() => {
+    generationCompletedRef.current = true
+    stopAllPolling()
+    setIsGenerating(false)
+    setCurrentJobId(null)
+    console.log('FRONTEND_GENERATION_COMPLETE')
+  }, [stopAllPolling])
+
+  const getJobSignedAudioUrl = (job: any): string | null => {
+    const outputSigned = Array.isArray(job.output_files)
+      ? job.output_files.find((f: any) => typeof f?.signed_url === 'string' && f.signed_url.length > 0)?.signed_url
+      : null
+    return outputSigned || job.output_url || job.audio_url || job.preview_url || null
   }
 
   useEffect(() => {
@@ -659,6 +702,11 @@ export default function GeneratePage() {
         })
 
         if (isSuccessStatus) {
+          terminalJobIdsRef.current.add(currentJobId)
+          const allTerminalNow = currentJobIds.length <= 1 || currentJobIds.every((id) => terminalJobIdsRef.current.has(id))
+          if (allTerminalNow) {
+            console.log('FRONTEND_ALL_JOBS_TERMINAL', { job_ids: currentJobIds.length > 0 ? currentJobIds : [currentJobId] })
+          }
           console.log('JOB_TERMINAL', { job_id: currentJobId, status: effectiveStatus })
           if (jobPollingIntervalRef.current) {
             clearInterval(jobPollingIntervalRef.current)
@@ -667,8 +715,6 @@ export default function GeneratePage() {
           setCurrentJobId(null)
           // Immediately unblock the Generate button – never leave isGenerating true
           // after a terminal success, even if subsequent async fetches are slow.
-          generationCompletedRef.current = true
-          setIsGenerating(false)
           console.log("SUCCESS_TRIGGERED")
           console.log('JOB_SUCCESS_STATUS_RECEIVED', job)
           console.log("JOB_TERMINAL_SUCCESS", job)
@@ -684,7 +730,7 @@ export default function GeneratePage() {
           setAiPlanValidation(null)
 
           // Resolve a playable audio URL from the finished job
-          const jobAudioUrl = job.audio_url || job.preview_url || null
+          const jobAudioUrl = getJobSignedAudioUrl(job)
           if (jobAudioUrl) {
             setAudioUrl(jobAudioUrl)
           }
@@ -742,6 +788,7 @@ export default function GeneratePage() {
               setStructurePreview(job.structure_preview)
             }
             setError(null)
+            if (allTerminalNow) finalizeGeneration()
             return
           }
 
@@ -814,25 +861,31 @@ export default function GeneratePage() {
             setSelectedPreviewId(rawCandidates[0].arrangement_id)
             setArrangementId(rawCandidates[0].arrangement_id)
             console.log('generated_results_displayed', { arrangement_id: rawCandidates[0].arrangement_id, candidate_count: rawCandidates.length })
+            if (allTerminalNow) finalizeGeneration()
           } else {
             // Backend succeeded but no arrangement data was returned; clear any
             // prior error – only show an error if the job explicitly failed.
             setError(null)
+            if (allTerminalNow) finalizeGeneration()
           }
 
           if (job.structure_preview) {
             setStructurePreview(job.structure_preview)
           }
-        } else if (isFailedStatus) {
-          console.log('JOB_TERMINAL', { job_id: currentJobId, status: effectiveStatus })
-          if (jobPollingIntervalRef.current) {
-            clearInterval(jobPollingIntervalRef.current)
-            jobPollingIntervalRef.current = null
+          const allTerminal = currentJobIds.length > 0 && currentJobIds.every((id) => terminalJobIdsRef.current.has(id) || id === currentJobId)
+          if (allTerminal) {
+            console.log('FRONTEND_ALL_JOBS_TERMINAL', { job_ids: currentJobIds })
+            finalizeGeneration()
           }
-          setCurrentJobId(null)
+        } else if (isFailedStatus) {
+          terminalJobIdsRef.current.add(currentJobId)
+          console.log('JOB_TERMINAL', { job_id: currentJobId, status: effectiveStatus })
           setError(job.error_message || 'Render job failed. Please try again.')
-          generationCompletedRef.current = true
-          setIsGenerating(false)
+          const allTerminal = currentJobIds.length > 0 && currentJobIds.every((id) => terminalJobIdsRef.current.has(id))
+          if (allTerminal) {
+            console.log('FRONTEND_ALL_JOBS_TERMINAL', { job_ids: currentJobIds })
+            finalizeGeneration()
+          }
         }
       } catch (err) {
         jobPollingErrorCountRef.current += 1
@@ -843,9 +896,9 @@ export default function GeneratePage() {
             jobPollingIntervalRef.current = null
           }
           setCurrentJobId(null)
-          setError('Connection issue while checking render status. Please try again.')
           generationCompletedRef.current = true
           setIsGenerating(false)
+          setError('Connection issue while checking render status. Please try again.')
         }
       } finally {
         jobPollInFlightRef.current = false
@@ -905,7 +958,24 @@ export default function GeneratePage() {
       jobPollInFlightRef.current = false
       console.log('POLL_CANCELLED', { job_id: currentJobId, reason: 'effect_cleanup' })
     }
-  }, [currentJobId, loadHistory, loopId])
+  }, [currentJobId, currentJobIds, finalizeGeneration, loadHistory, loopId])
+
+
+  useEffect(() => {
+    if (!isGenerating) return
+    if (terminalJobIdsRef.current.size === 0) return
+    if (!audioUrl) return
+
+    const guardId = setTimeout(() => {
+      if (!isGenerating) return
+      console.warn('FRONTEND_GENERATION_STUCK_GUARD', {
+        terminal_jobs: Array.from(terminalJobIdsRef.current),
+      })
+      finalizeGeneration()
+    }, 0)
+
+    return () => clearTimeout(guardId)
+  }, [audioUrl, finalizeGeneration, isGenerating])
 
   // Sync selectedPreviewId → main arrangement state.
   //
@@ -1160,7 +1230,10 @@ export default function GeneratePage() {
       return
     }
 
-    console.log('GENERATE_CLICKED', loopId)
+    console.log('FRONTEND_GENERATE_START', {
+      loop_id: loopIdNum,
+      timestamp: new Date().toISOString(),
+    })
 
     setIsGenerating(true)
     generationCompletedRef.current = false
@@ -1336,10 +1409,25 @@ export default function GeneratePage() {
       const renderResponse = await renderLoopAsync(loopIdNum, options)
       console.log('RENDER_ASYNC_RESPONSE', renderResponse)
       console.log("RENDER_ASYNC_RESPONSE_FULL", renderResponse)
-      const job_id = renderResponse.job_id
-      console.log('job_id_received', { job_id, loop_id: loopIdNum })
-      console.log("JOB_ID_SET", job_id)
-      setCurrentJobId(job_id)
+      const jobIds = extractJobIds(renderResponse)
+      if (jobIds.length === 0) {
+        console.error('RENDER_RESPONSE_NO_JOB_IDS', { loop_id: loopIdNum, renderResponse })
+        setError('Render started but no job ID was returned.')
+        setIsGenerating(false)
+        return
+      }
+
+      console.log('JOB_IDS_EXTRACTED', { job_ids: jobIds, loop_id: loopIdNum })
+      terminalJobIdsRef.current = new Set()
+      for (const jobId of jobIds) {
+        console.log('FRONTEND_JOB_REGISTERED', {
+          loop_id: loopIdNum,
+          job_id: jobId,
+          timestamp: new Date().toISOString(),
+        })
+      }
+      setCurrentJobIds(jobIds)
+      setCurrentJobId(jobIds[0])
       jobDispatched = true
 
       console.log("POLL_CANCELLED", { reason: "start_new_generation_cancels_previous" })
