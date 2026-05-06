@@ -271,9 +271,10 @@ describe('UploadForm Component', () => {
     it('should reject files larger than 50MB', async () => {
       render(<UploadForm onUploadSuccess={mockOnUploadSuccess} />)
 
-      const largeFile = new File(['x'.repeat(51 * 1024 * 1024)], 'huge.mp3', {
+      const largeFile = new File(['x'], 'huge.mp3', {
         type: 'audio/mpeg',
       })
+      Object.defineProperty(largeFile, 'size', { value: 51 * 1024 * 1024 })
       const input = screen.getByLabelText(/Choose files/i) as HTMLInputElement
 
       await userEvent.upload(input, largeFile)
@@ -285,9 +286,10 @@ describe('UploadForm Component', () => {
     it('should accept files at 50MB limit', async () => {
       render(<UploadForm onUploadSuccess={mockOnUploadSuccess} />)
 
-      const limitFile = new File(['x'.repeat(50 * 1024 * 1024)], 'max.mp3', {
+      const limitFile = new File(['x'], 'max.mp3', {
         type: 'audio/mpeg',
       })
+      Object.defineProperty(limitFile, 'size', { value: 50 * 1024 * 1024 })
       const input = screen.getByLabelText(/Choose files/i) as HTMLInputElement
 
       await userEvent.upload(input, limitFile)

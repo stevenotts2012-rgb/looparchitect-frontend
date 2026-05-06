@@ -110,21 +110,21 @@ describe('renderLoopAsync', () => {
     expect(url).toBe(`${RAILWAY_ORIGIN}/api/v1/loops/1/render-async`)
   })
 
-  it('sends target_seconds in the request body', async () => {
+  it('sends target_length_seconds in the request body', async () => {
     global.fetch = makeFetchMock(mockRenderResponse)
     await renderLoopAsync(5, { targetSeconds: 120 })
     const [[, init]] = (global.fetch as jest.Mock).mock.calls
     const body = JSON.parse(init.body as string)
-    expect(body.target_seconds).toBe(120)
+    expect(body.target_length_seconds).toBe(120)
   })
 
-  it('calculates target_seconds from bars and bpm', async () => {
+  it('calculates target_length_seconds from bars and bpm', async () => {
     global.fetch = makeFetchMock(mockRenderResponse)
     await renderLoopAsync(1, { bars: 32, loopBpm: 120 })
     const [[, init]] = (global.fetch as jest.Mock).mock.calls
     const body = JSON.parse(init.body as string)
     // 32 bars * 4 beats/bar * 60s / 120 bpm = 64s
-    expect(body.target_seconds).toBe(64)
+    expect(body.target_length_seconds).toBe(64)
   })
 
   it('uses default 180s when no duration is provided', async () => {
@@ -132,7 +132,7 @@ describe('renderLoopAsync', () => {
     await renderLoopAsync(1)
     const [[, init]] = (global.fetch as jest.Mock).mock.calls
     const body = JSON.parse(init.body as string)
-    expect(body.target_seconds).toBe(180)
+    expect(body.target_length_seconds).toBe(180)
   })
 
   it('includes optional fields when provided', async () => {
@@ -194,7 +194,7 @@ describe('renderLoopAsync', () => {
     await renderLoopAsync(1, { bars: 1, loopBpm: 240 })
     const [[, init]] = (global.fetch as jest.Mock).mock.calls
     const body = JSON.parse(init.body as string)
-    expect(body.target_seconds).toBeGreaterThanOrEqual(10)
+    expect(body.target_length_seconds).toBeGreaterThanOrEqual(10)
   })
 })
 
