@@ -2043,7 +2043,7 @@ describe('Single-controller job polling path', () => {
       await Promise.resolve()
     })
 
-    expect(listArrangements).toHaveBeenCalledTimes(2) // initial loadHistory + optimistic refresh
+    expect(listArrangements).toHaveBeenCalledTimes(1) // initial loadHistory only
     expect(console.log).not.toHaveBeenCalledWith('ARRANGEMENT_POLL_TICK', expect.anything())
   })
 

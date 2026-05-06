@@ -161,6 +161,7 @@ export default function GeneratePage() {
   // path transitions the UI out of "generating" state.  Prevents timeout
   // handlers from surfacing stale errors after a successful completion.
   const generationCompletedRef = useRef(false)
+  const history422LoopRef = useRef<string | null>(null)
 
   const clearPreviewCandidates = () => {
     setPreviewCandidates((current) => {
@@ -187,6 +188,10 @@ export default function GeneratePage() {
   }, [])
 
   const loadHistory = useCallback(async (requestedLoopId?: number, statusFilter?: string) => {
+    const requestedLoopKey = requestedLoopId != null ? String(requestedLoopId) : 'all'
+    if (history422LoopRef.current === requestedLoopKey) {
+      return
+    }
     setIsHistoryLoading(true)
     setHistoryError(null)
 
@@ -199,6 +204,11 @@ export default function GeneratePage() {
       setHistoryRows(rows)
     } catch (err) {
       if (err instanceof LoopArchitectApiError) {
+        if (err.status === 422) {
+          history422LoopRef.current = requestedLoopKey
+          setHistoryError('Arrangement history is temporarily unavailable for this loop (422). Please verify loop data and try again.')
+          return
+        }
         setHistoryError(err.message)
       } else {
         setHistoryError('Failed to load generation history.')
@@ -1334,8 +1344,8 @@ export default function GeneratePage() {
 
       console.log("POLL_CANCELLED", { reason: "start_new_generation_cancels_previous" })
 
-      // Optimistic history refresh so the row appears immediately.
-      await loadHistory(loopIdNum)
+      // Do not force history refresh while actively generating; this avoids
+      // repeated /arrangements?loop_id calls when backend returns 422.
     } catch (err) {
       if (err instanceof LoopArchitectApiError) {
         // Check for missing file error (400 status with "missing" in message)
