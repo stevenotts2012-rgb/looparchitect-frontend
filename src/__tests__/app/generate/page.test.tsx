@@ -2288,6 +2288,7 @@ describe('render-async job id extraction bootstrap', () => {
       expect.objectContaining({ loop_id: 1, job_id: 'job-b', timestamp: expect.any(String) })
     )
   })
+
   it('shows readable error and does not poll when no job ids are returned', async () => {
     ;(renderLoopAsync as jest.Mock).mockResolvedValue({ ok: true })
 
