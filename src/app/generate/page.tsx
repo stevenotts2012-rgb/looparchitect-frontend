@@ -48,6 +48,7 @@ import ReferenceTrackPanel, { type AdaptationStrength, type GuidanceMode } from 
 import { ReferenceGuidancePanel } from '@/components/ReferenceGuidancePanel'
 import { SectionStateBadge, deriveSectionState } from '@/components/SectionStateBadge'
 import { SimpleStyleProfile } from '@/lib/styleSchema'
+import { extractJobIds } from '@/lib/extractJobIds'
 
 export default function GeneratePage() {
   type PreviewCandidateState = ArrangementPreviewCandidate & {
@@ -134,6 +135,7 @@ export default function GeneratePage() {
   })
 
   const [currentJobId, setCurrentJobId] = useState<string | null>(null)
+  const [currentJobIds, setCurrentJobIds] = useState<string[]>([])
 
   const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null)
   const pollingErrorCountRef = useRef<number>(0)
@@ -1336,10 +1338,17 @@ export default function GeneratePage() {
       const renderResponse = await renderLoopAsync(loopIdNum, options)
       console.log('RENDER_ASYNC_RESPONSE', renderResponse)
       console.log("RENDER_ASYNC_RESPONSE_FULL", renderResponse)
-      const job_id = renderResponse.job_id
-      console.log('job_id_received', { job_id, loop_id: loopIdNum })
-      console.log("JOB_ID_SET", job_id)
-      setCurrentJobId(job_id)
+      const jobIds = extractJobIds(renderResponse)
+      if (jobIds.length === 0) {
+        console.error('RENDER_RESPONSE_NO_JOB_IDS', { loop_id: loopIdNum, renderResponse })
+        setError('Render started but no job ID was returned.')
+        setIsGenerating(false)
+        return
+      }
+
+      console.log('JOB_IDS_EXTRACTED', { job_ids: jobIds, loop_id: loopIdNum })
+      setCurrentJobIds(jobIds)
+      setCurrentJobId(jobIds[0])
       jobDispatched = true
 
       console.log("POLL_CANCELLED", { reason: "start_new_generation_cancels_previous" })
