@@ -168,7 +168,7 @@ export interface LoopResponse {
 export interface Arrangement {
   id: number;
   loop_id: number;
-  status: 'queued' | 'pending' | 'processing' | 'done' | 'completed' | 'failed';
+  status: 'queued' | 'pending' | 'running' | 'processing' | 'done' | 'completed' | 'success' | 'failed' | 'error' | 'cancelled';
   error_message?: string;
   output_file?: string;
   output_s3_key?: string;
@@ -182,7 +182,7 @@ export interface Arrangement {
 
 export interface ArrangementPreviewCandidate {
   arrangement_id: number;
-  status: 'queued' | 'pending' | 'processing' | 'done' | 'completed' | 'failed';
+  status: 'queued' | 'pending' | 'running' | 'processing' | 'done' | 'completed' | 'success' | 'failed' | 'error' | 'cancelled';
   created_at: string;
   render_job_id?: string;
   seed_used?: number;
@@ -208,7 +208,7 @@ export interface StylePresetResponse {
 
 export interface ArrangementStatusResponse {
   id: number;
-  status: 'queued' | 'processing' | 'done' | 'failed' | 'pending' | 'completed';
+  status: 'queued' | 'pending' | 'running' | 'processing' | 'done' | 'completed' | 'success' | 'failed' | 'error' | 'cancelled';
   progress?: number;
   error_message?: string;
   output_file?: string;
@@ -222,7 +222,7 @@ export interface ArrangementStatusResponse {
   // Preview render lifecycle fields – populated by the async preview worker.
   // `preview_status` is the authoritative state of the audio render job;
   // `preview_url` is a directly playable URL (served static file or signed URL).
-  preview_status?: 'pending' | 'queued' | 'processing' | 'completed' | 'failed';
+  preview_status?: 'pending' | 'queued' | 'running' | 'processing' | 'completed' | 'failed' | 'error' | 'cancelled';
   preview_url?: string;
   preview_error?: string;
   preview_rendered_at?: string;

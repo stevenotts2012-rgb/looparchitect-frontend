@@ -244,7 +244,7 @@ export default function GeneratePage() {
           '| preview_url:', status.preview_url)
 
         const isFinished =
-          status.status === 'done' || status.status === 'completed' || status.status === 'failed'
+          status.status === 'done' || status.status === 'completed' || status.status === 'success' || status.status === 'failed' || status.status === 'error' || status.status === 'cancelled'
 
         if (isFinished) {
           if (pollingIntervalRef.current) {
@@ -254,7 +254,7 @@ export default function GeneratePage() {
 
           await loadHistory()
 
-          if (status.status === 'done' || status.status === 'completed') {
+          if (status.status === 'done' || status.status === 'completed' || status.status === 'success') {
             // Only attempt the download if we haven't already succeeded or exhausted retries.
             if (!audioUrlRef.current && !audioUnavailable) {
               // PRIMARY PATH: use preview_url, output_file_url, or output_url directly
@@ -382,6 +382,7 @@ export default function GeneratePage() {
       const hasPending = current.some(
         (c) =>
           c.status === 'queued' ||
+          c.status === 'running' ||
           c.status === 'processing' ||
           c.status === 'pending' ||
           ((c.status === 'done' || c.status === 'completed') && !c.audioUrl && !c.audioUnavailable)
@@ -401,6 +402,7 @@ export default function GeneratePage() {
         current.map(async (candidate) => {
           const isStillPending =
             candidate.status === 'queued' ||
+            candidate.status === 'running' ||
             candidate.status === 'processing' ||
             candidate.status === 'pending'
           const needsAudio =
@@ -500,7 +502,7 @@ export default function GeneratePage() {
             // Preserve existing audioUrl – never overwrite a valid URL with null
             let nextAudioUrl = candidate.audioUrl ?? null
 
-            if (!nextAudioUrl && (status.status === 'done' || status.status === 'completed')) {
+            if (!nextAudioUrl && (status.status === 'done' || status.status === 'completed' || status.status === 'success')) {
               // PRIMARY: use a directly-servable URL from the status response.
               const directUrl = resolveArrangementAudioUrl(status)
               if (directUrl) {
@@ -2167,10 +2169,11 @@ export default function GeneratePage() {
                 {previewCandidates.map((candidate) => {
                   const isSelected = selectedPreviewId === candidate.arrangement_id
                   const isDone = candidate.status === 'done' || candidate.status === 'completed'
-                  const isFailed = candidate.status === 'failed'
+                  const isFailed = candidate.status === 'failed' || candidate.status === 'error' || candidate.status === 'cancelled'
                   const isPending =
                     candidate.status === 'queued' ||
                     candidate.status === 'pending' ||
+                    candidate.status === 'running' ||
                     candidate.status === 'processing'
 
                   const badgeState = deriveSectionState(candidate)
@@ -2209,8 +2212,8 @@ export default function GeneratePage() {
                         (() => {
                           const previewStatus = candidate.arrangementStatus?.preview_status
                           const previewRendering =
-                            previewStatus === 'queued' || previewStatus === 'processing'
-                          const previewFailed = previewStatus === 'failed'
+                            previewStatus === 'queued' || previewStatus === 'pending' || previewStatus === 'running' || previewStatus === 'processing'
+                          const previewFailed = previewStatus === 'failed' || previewStatus === 'error' || previewStatus === 'cancelled'
                           if (previewFailed) {
                             return (
                               <div className="space-y-2">
@@ -2324,7 +2327,7 @@ export default function GeneratePage() {
                     (() => {
                       const previewStatus = arrangementStatus.preview_status
                       const isPreviewRendering =
-                        previewStatus === 'queued' || previewStatus === 'processing'
+                        previewStatus === 'queued' || previewStatus === 'pending' || previewStatus === 'running' || previewStatus === 'processing'
                       const loadingLabel = isPreviewRendering
                         ? 'Rendering preview…'
                         : 'Loading audio…'
