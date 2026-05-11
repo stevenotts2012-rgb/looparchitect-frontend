@@ -2172,6 +2172,29 @@ describe('Generate request body correctness', () => {
       )
     })
   })
+
+  it('sends custom genre/style unchanged and keeps selected style visible', async () => {
+    await renderPage('1')
+    await act(async () => {
+      fireEvent.change(screen.getByLabelText(/Genre \/ Style \(free text\)/i), { target: { value: 'R&B' } })
+    })
+    await clickGenerate()
+    await waitFor(() => {
+      expect(renderLoopAsync).toHaveBeenCalledWith(1, expect.objectContaining({ genre: 'R&B' }))
+    })
+    expect(screen.getByText(/Selected style: R&B/i)).toBeInTheDocument()
+  })
+
+  it('sends gospel/worship unchanged', async () => {
+    await renderPage('1')
+    await act(async () => {
+      fireEvent.change(screen.getByLabelText(/Genre \/ Style \(free text\)/i), { target: { value: 'gospel/worship' } })
+    })
+    await clickGenerate()
+    await waitFor(() => {
+      expect(renderLoopAsync).toHaveBeenCalledWith(1, expect.objectContaining({ genre: 'gospel/worship' }))
+    })
+  })
 })
 
 // ===========================================================================
@@ -2232,9 +2255,9 @@ describe('Multiple candidates render as multiple cards', () => {
     })
 
     // Each candidate should appear as its own card
-    expect(screen.getByText(/Variation #201 — mainstream/i)).toBeInTheDocument()
-    expect(screen.getByText(/Variation #202 — mainstream/i)).toBeInTheDocument()
-    expect(screen.getByText(/Variation #203 — mainstream/i)).toBeInTheDocument()
+    expect(screen.getByText(/Variation #201 — clean\/main/i)).toBeInTheDocument()
+    expect(screen.getByText(/Variation #202 — clean\/main/i)).toBeInTheDocument()
+    expect(screen.getByText(/Variation #203 — clean\/main/i)).toBeInTheDocument()
   })
 
   it('shows "Only one variation returned by backend." warning when only one candidate is present', async () => {
