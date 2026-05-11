@@ -2411,7 +2411,6 @@ describe('partial multi-variation completion handling', () => {
     })
     expect(screen.queryByText(/Only one variation returned by backend\./i)).not.toBeInTheDocument()
   })
-
   it('locks failed variation terminal state and does not regress to processing', async () => {
     ;(renderLoopAsync as jest.Mock).mockResolvedValue({ jobs: [{ job_id: 'job-lock', personality: 'cinematic/experimental', variation_index: 2 }] })
     ;(getJobStatus as jest.Mock)
