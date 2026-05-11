@@ -2411,4 +2411,48 @@ describe('partial multi-variation completion handling', () => {
     })
     expect(screen.queryByText(/Only one variation returned by backend\./i)).not.toBeInTheDocument()
   })
+  it('locks failed variation terminal state and does not regress to processing', async () => {
+    ;(renderLoopAsync as jest.Mock).mockResolvedValue({ jobs: [{ job_id: 'job-lock', personality: 'cinematic/experimental', variation_index: 2 }] })
+    ;(getJobStatus as jest.Mock)
+      .mockResolvedValueOnce({ status: 'failed', error_message: 'Render failed hard' })
+      .mockResolvedValueOnce({ status: 'processing' })
+
+    await renderPage('1')
+    const loopInput = screen.getByRole('spinbutton', { name: /Loop ID/i })
+    await act(async () => { fireEvent.change(loopInput, { target: { value: '1' } }) })
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: /Generate Arrangement/i })) })
+    await flushPromises()
+
+    await waitFor(() => {
+      expect(screen.getByText(/Failed \/ unavailable/i)).toBeInTheDocument()
+    })
+    expect(screen.queryByText(/Rendering — preview will appear when ready\./i)).not.toBeInTheDocument()
+  })
+
+  it('marks missing output terminal jobs as failed/unavailable placeholders', async () => {
+    ;(renderLoopAsync as jest.Mock).mockResolvedValue({
+      jobs: [
+        { job_id: 'job-mo-1', personality: 'clean/mainstream', variation_index: 0 },
+        { job_id: 'job-mo-2', personality: 'dark/drop-heavy', variation_index: 1 },
+        { job_id: 'job-mo-3', personality: 'cinematic/experimental', variation_index: 2 },
+      ],
+    })
+    ;(getJobStatus as jest.Mock).mockImplementation((id: string) => Promise.resolve(
+      id === 'job-mo-3'
+        ? { status: 'finished', arrangement_id: null, output_url: null }
+        : { status: 'finished', arrangement_id: id === 'job-mo-1' ? 711 : 712, output_url: `https://cdn.example.com/${id}.wav` }
+    ))
+    ;(getArrangementStatus as jest.Mock).mockImplementation((id: number) => Promise.resolve(makeArrangementStatus({ id })))
+
+    await renderPage('1')
+    const loopInput = screen.getByRole('spinbutton', { name: /Loop ID/i })
+    await act(async () => { fireEvent.change(loopInput, { target: { value: '1' } }) })
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: /Generate Arrangement/i })) })
+    await flushPromises()
+
+    await waitFor(() => {
+      expect(screen.getByText(/Variation 3 — cinematic\/experimental/i)).toBeInTheDocument()
+      expect(screen.getAllByText(/Failed \/ unavailable/i).length).toBeGreaterThan(0)
+    })
+  })
 })

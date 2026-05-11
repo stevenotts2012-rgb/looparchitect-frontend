@@ -166,6 +166,7 @@ export default function GeneratePage() {
   // handlers from surfacing stale errors after a successful completion.
   const generationCompletedRef = useRef(false)
   const terminalJobIdsRef = useRef<Set<string>>(new Set())
+  const terminalVariationIdsRef = useRef<Set<string>>(new Set())
   const history422LoopRef = useRef<string | null>(null)
 
   const clearPreviewCandidates = () => {
@@ -662,15 +663,38 @@ export default function GeneratePage() {
       jobPollInFlightRef.current = true
       try {
         const job = await getJobStatus(currentJobId)
-        setJobStatusById((current) => ({
-          ...current,
-          [currentJobId]: {
-            status: job.status,
-            output_url: getJobSignedAudioUrl(job),
-            arrangement_id: job.arrangement_id ?? job?.result?.arrangement_id ?? null,
-            error_message: job.error_message ?? null,
-          },
-        }))
+        const nextStatus = (job.status ?? job.state ?? job.job_status ?? '').toString().toLowerCase()
+        const nextOutputUrl = getJobSignedAudioUrl(job)
+        const nextArrangementId = job.arrangement_id ?? job?.result?.arrangement_id ?? null
+        const isNextTerminal = ['done', 'completed', 'success', 'finished', 'failed', 'error', 'cancelled', 'missing_output'].includes(nextStatus)
+        setJobStatusById((current) => {
+          const existing = current[currentJobId]
+          const existingStatus = (existing?.status ?? '').toString().toLowerCase()
+          const isExistingTerminal = ['done', 'completed', 'success', 'finished', 'failed', 'error', 'cancelled', 'missing_output'].includes(existingStatus)
+          if (isExistingTerminal && !isNextTerminal) {
+            console.log('FRONTEND_TERMINAL_STATE_PRESERVED', { job_id: currentJobId, existing_status: existingStatus, dropped_status: nextStatus })
+            return current
+          }
+          if (isExistingTerminal && isNextTerminal) {
+            const hasBetterData = (!!nextOutputUrl && !existing?.output_url) || (!!nextArrangementId && !existing?.arrangement_id)
+            if (!hasBetterData) {
+              console.log('FRONTEND_TERMINAL_VARIATION_LOCKED', { job_id: currentJobId, status: existingStatus })
+              return current
+            }
+          }
+          if (isNextTerminal) {
+            terminalVariationIdsRef.current.add(currentJobId)
+          }
+          return {
+            ...current,
+            [currentJobId]: {
+              status: nextStatus || job.status,
+              output_url: nextOutputUrl,
+              arrangement_id: nextArrangementId,
+              error_message: job.error_message ?? null,
+            },
+          }
+        })
         jobPollingAttemptRef.current += 1
         console.log("RAW_JOB_RESPONSE", job)
         console.log("POLL_TICK", { job_id: currentJobId, attempt: jobPollingAttemptRef.current, status: job.status ?? job.state ?? job.job_status ?? 'unknown' })
@@ -718,6 +742,7 @@ export default function GeneratePage() {
           const allTerminalNow = currentJobIds.length <= 1 || currentJobIds.every((id) => terminalJobIdsRef.current.has(id))
           if (allTerminalNow) {
             console.log('FRONTEND_ALL_JOBS_TERMINAL', { job_ids: currentJobIds.length > 0 ? currentJobIds : [currentJobId] })
+            console.log('FRONTEND_ALL_VARIATIONS_TERMINAL', { job_ids: currentJobIds.length > 0 ? currentJobIds : [currentJobId] })
           }
           console.log('JOB_TERMINAL', { job_id: currentJobId, status: effectiveStatus })
           if (jobPollingIntervalRef.current) {
@@ -909,6 +934,7 @@ export default function GeneratePage() {
           const allTerminal = currentJobIds.length > 0 && currentJobIds.every((id) => terminalJobIdsRef.current.has(id))
           if (allTerminal) {
             console.log('FRONTEND_ALL_JOBS_TERMINAL', { job_ids: currentJobIds })
+            console.log('FRONTEND_ALL_VARIATIONS_TERMINAL', { job_ids: currentJobIds })
             finalizeGeneration()
           }
         }
@@ -1564,7 +1590,10 @@ export default function GeneratePage() {
       const personality = meta.personality || 'mainstream'
       const matchedCandidate = previewCandidates.find((candidate) => (candidate as any).render_job_id === jobId || (statusMeta.arrangement_id != null && candidate.arrangement_id === statusMeta.arrangement_id))
       if (matchedCandidate) return { ...matchedCandidate, slotKey: jobId, variation_index: variationIndex, personality, error_message: statusMeta.error_message }
-      return { slotKey: jobId, arrangement_id: -(idx + 1), status: statusMeta.status || 'failed', audioUrl: statusMeta.output_url || null, variation_index: variationIndex ?? idx, personality, error_message: statusMeta.error_message || null } as any
+      const statusNorm = (statusMeta.status || '').toString().toLowerCase()
+      const terminalWithoutOutput = ['done', 'completed', 'success', 'finished'].includes(statusNorm) && !statusMeta.output_url
+      const fallbackStatus = terminalWithoutOutput ? 'missing_output' : (statusMeta.status || 'failed')
+      return { slotKey: jobId, arrangement_id: -(idx + 1), status: fallbackStatus, audioUrl: statusMeta.output_url || null, variation_index: variationIndex ?? idx, personality, error_message: statusMeta.error_message || null } as any
     })
     : previewCandidates)
     .sort((a: any, b: any) => Number(a.variation_index ?? 999) - Number(b.variation_index ?? 999))
@@ -2269,7 +2298,7 @@ export default function GeneratePage() {
                 {cardsToRender.map((candidate: any) => {
                   const isSelected = selectedPreviewId === candidate.arrangement_id
                   const isDone = candidate.status === 'done' || candidate.status === 'completed'
-                  const isFailed = candidate.status === 'failed' || candidate.status === 'error' || candidate.status === 'cancelled'
+                  const isFailed = candidate.status === 'failed' || candidate.status === 'error' || candidate.status === 'cancelled' || candidate.status === 'missing_output'
                   const isPending =
                     candidate.status === 'queued' ||
                     candidate.status === 'pending' ||
