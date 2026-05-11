@@ -2179,6 +2179,26 @@ describe('Generate request body correctness', () => {
 // ===========================================================================
 
 describe('Multiple candidates render as multiple cards', () => {
+  it('jobs[] with 3 items is detected and polling starts from jobs[]', async () => {
+    ;(renderLoopAsync as jest.Mock).mockResolvedValue({
+      jobs: [
+        { job_id: 'job-v1', personality: 'clean/mainstream', variation_index: 0 },
+        { job_id: 'job-v2', personality: 'dark/drop-heavy', variation_index: 1 },
+        { job_id: 'job-v3', personality: 'cinematic/experimental', variation_index: 2 },
+      ],
+    })
+    ;(getJobStatus as jest.Mock).mockResolvedValue({ status: 'running' })
+
+    await renderPage('1')
+    const loopInput = screen.getByRole('spinbutton', { name: /Loop ID/i })
+    await act(async () => { fireEvent.change(loopInput, { target: { value: '1' } }) })
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: /Generate Arrangement/i })) })
+    await flushPromises()
+
+    expect(console.log).toHaveBeenCalledWith('FRONTEND_JOBS_ARRAY_DETECTED', expect.objectContaining({ count: 3 }))
+    expect(console.log).toHaveBeenCalledWith('FRONTEND_MULTI_JOB_POLL_START', expect.objectContaining({ job_ids: ['job-v1', 'job-v2', 'job-v3'] }))
+  })
+
   it('renders a card for each candidate when backend returns multiple candidates', async () => {
     const candidates = [
       { arrangement_id: 201, status: 'done', created_at: '2024-01-15T10:00:00Z' },
@@ -2212,14 +2232,14 @@ describe('Multiple candidates render as multiple cards', () => {
     })
 
     // Each candidate should appear as its own card
-    expect(screen.getByText(/Variation #201/i)).toBeInTheDocument()
-    expect(screen.getByText(/Variation #202/i)).toBeInTheDocument()
-    expect(screen.getByText(/Variation #203/i)).toBeInTheDocument()
+    expect(screen.getByText(/Variation #201 — mainstream/i)).toBeInTheDocument()
+    expect(screen.getByText(/Variation #202 — mainstream/i)).toBeInTheDocument()
+    expect(screen.getByText(/Variation #203 — mainstream/i)).toBeInTheDocument()
   })
 
   it('shows "Only one variation returned by backend." warning when only one candidate is present', async () => {
     const candidate = { arrangement_id: 301, status: 'done', created_at: '2024-01-15T10:00:00Z' }
-    ;(renderLoopAsync as jest.Mock).mockResolvedValue({ job_id: 'job-single' })
+    ;(renderLoopAsync as jest.Mock).mockResolvedValue({ jobs: [{ job_id: 'job-single' }] })
     ;(getJobStatus as jest.Mock).mockResolvedValue({
       status: 'finished',
       candidates: [candidate],

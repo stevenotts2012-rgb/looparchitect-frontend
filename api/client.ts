@@ -1148,7 +1148,14 @@ export async function analyzeReferenceTrack(
  * Response from POST /v1/loops/{loop_id}/render-async
  */
 export interface RenderAsyncResponse {
-  job_id: string;
+  job_id?: string;
+  jobs?: Array<{
+    job_id: string;
+    personality?: string;
+    variation_index?: number;
+    variation_seed?: number;
+    poll_url?: string;
+  }>;
   loop_id?: number;
   status?: string;
   message?: string;

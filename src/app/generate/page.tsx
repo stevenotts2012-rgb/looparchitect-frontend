@@ -136,6 +136,7 @@ export default function GeneratePage() {
 
   const [currentJobId, setCurrentJobId] = useState<string | null>(null)
   const [currentJobIds, setCurrentJobIds] = useState<string[]>([])
+  const [jobMetadataById, setJobMetadataById] = useState<Record<string, { personality?: string; variation_index?: number; variation_seed?: number }>>({})
 
   const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null)
   const pollingErrorCountRef = useRef<number>(0)
@@ -712,7 +713,8 @@ export default function GeneratePage() {
             clearInterval(jobPollingIntervalRef.current)
             jobPollingIntervalRef.current = null
           }
-          setCurrentJobId(null)
+          const nextJobId = currentJobIds.find((id) => !terminalJobIdsRef.current.has(id))
+          setCurrentJobId(nextJobId ?? null)
           // Immediately unblock the Generate button – never leave isGenerating true
           // after a terminal success, even if subsequent async fetches are slow.
           console.log("SUCCESS_TRIGGERED")
@@ -771,15 +773,26 @@ export default function GeneratePage() {
               setArrangementStatus(autoStatus)
             }
 
-            setPreviewCandidates([{
-              arrangement_id: effectiveArrangementId,
-              status: 'done' as const,
-              audioUrl: finalAudioUrl ?? null,
-              created_at: job.updated_at || new Date().toISOString(),
-              render_job_id: job.job_id,
-              seed_used: job.seed_used,
-              arrangementStatus: autoStatus ?? undefined,
-            }])
+            setPreviewCandidates((existing) => {
+              const variationMeta = jobMetadataById[currentJobId]
+              const candidate = {
+                arrangement_id: effectiveArrangementId,
+                status: 'done' as const,
+                audioUrl: finalAudioUrl ?? null,
+                created_at: job.updated_at || new Date().toISOString(),
+                render_job_id: job.job_id,
+                seed_used: job.seed_used,
+                personality: variationMeta?.personality,
+                variation_index: variationMeta?.variation_index,
+                arrangementStatus: autoStatus ?? undefined,
+              }
+              const idx = existing.findIndex((c) => c.arrangement_id === effectiveArrangementId)
+              const next = [...existing]
+              if (idx >= 0) next[idx] = { ...next[idx], ...candidate }
+              else next.push(candidate)
+              console.log('FRONTEND_VARIATION_CARD_CREATED', { job_id: currentJobId, arrangement_id: effectiveArrangementId, variation_index: variationMeta?.variation_index, personality: variationMeta?.personality })
+              return next
+            })
             setSelectedPreviewId(effectiveArrangementId)
             setArrangementId(effectiveArrangementId)
             console.log('generated_results_displayed', { arrangement_id: effectiveArrangementId, candidate_count: 1 })
@@ -1407,8 +1420,11 @@ export default function GeneratePage() {
       console.log("GENERATE_REQUEST_BODY", { loop_id: loopIdNum, ...options })
       console.log('render_async_started', { loop_id: loopIdNum })
       const renderResponse = await renderLoopAsync(loopIdNum, options)
-      console.log('RENDER_ASYNC_RESPONSE', renderResponse)
+      console.log('FRONTEND_RENDER_ASYNC_RESPONSE', renderResponse)
       console.log("RENDER_ASYNC_RESPONSE_FULL", renderResponse)
+      if (Array.isArray(renderResponse.jobs) && renderResponse.jobs.length > 0) {
+        console.log('FRONTEND_JOBS_ARRAY_DETECTED', { count: renderResponse.jobs.length, jobs: renderResponse.jobs })
+      }
       const jobIds = extractJobIds(renderResponse)
       if (jobIds.length === 0) {
         console.error('RENDER_RESPONSE_NO_JOB_IDS', { loop_id: loopIdNum, renderResponse })
@@ -1419,6 +1435,13 @@ export default function GeneratePage() {
 
       console.log('JOB_IDS_EXTRACTED', { job_ids: jobIds, loop_id: loopIdNum })
       terminalJobIdsRef.current = new Set()
+      const nextJobMetadata: Record<string, { personality?: string; variation_index?: number; variation_seed?: number }> = {}
+      if (Array.isArray(renderResponse.jobs)) {
+        for (const job of renderResponse.jobs) {
+          if (job?.job_id) nextJobMetadata[job.job_id] = { personality: job.personality, variation_index: job.variation_index, variation_seed: job.variation_seed }
+        }
+      }
+      setJobMetadataById(nextJobMetadata)
       for (const jobId of jobIds) {
         console.log('FRONTEND_JOB_REGISTERED', {
           loop_id: loopIdNum,
@@ -1428,6 +1451,7 @@ export default function GeneratePage() {
       }
       setCurrentJobIds(jobIds)
       setCurrentJobId(jobIds[0])
+      console.log('FRONTEND_MULTI_JOB_POLL_START', { job_ids: jobIds })
       jobDispatched = true
 
       console.log("POLL_CANCELLED", { reason: "start_new_generation_cancels_previous" })
@@ -2201,7 +2225,7 @@ export default function GeneratePage() {
                 </button>
               </div>
 
-              {previewCandidates.length === 1 && (
+              {previewCandidates.length === 1 && currentJobIds.length < 3 && (
                 <p className="text-sm text-amber-400" role="alert">
                   Only one variation returned by backend.
                 </p>
@@ -2226,7 +2250,7 @@ export default function GeneratePage() {
                       className={`rounded-lg border p-4 space-y-3 ${isSelected ? 'border-blue-500 bg-blue-950/30' : 'border-gray-700 bg-gray-800/40'}`}
                     >
                       <div className="flex items-center justify-between gap-2">
-                        <p className="text-sm text-white font-medium">Variation #{candidate.arrangement_id}</p>
+                        <p className="text-sm text-white font-medium">Variation {(candidate as any).variation_index != null ? Number((candidate as any).variation_index) + 1 : `#${candidate.arrangement_id}`} — {((candidate as any).personality || 'mainstream').toString()}</p>
                         <SectionStateBadge state={badgeState} />
                       </div>
 
