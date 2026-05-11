@@ -87,6 +87,11 @@ export default function GeneratePage() {
   const [historyLoopIdFilter, setHistoryLoopIdFilter] = useState<string>('')
   const [stylePresets, setStylePresets] = useState<StylePresetResponse[]>([])
   const [stylePreset, setStylePreset] = useState<string>('')
+  const [customGenreStyle, setCustomGenreStyle] = useState<string>('')
+  const [moodInput, setMoodInput] = useState<string>('')
+  const [energyInput, setEnergyInput] = useState<string>('')
+  const [stylePromptInput, setStylePromptInput] = useState<string>('')
+  const [keyInput, setKeyInput] = useState<string>('')
   const [seed, setSeed] = useState<string>('')
   const [selectedMoves, setSelectedMoves] = useState<string[]>([])
   const [structurePreview, setStructurePreview] = useState<Array<{ name: string; bars: number; energy: number }>>([])
@@ -1331,6 +1336,9 @@ export default function GeneratePage() {
       await validateLoopSource(loopIdNum)
       const loopDetails = await getLoop(loopIdNum)
       const loopBpm = Number(loopDetails.bpm || loopDetails.tempo || 120)
+      const selectedStyle = customGenreStyle.trim() || (styleMode === 'naturalLanguage' ? styleTextInput.trim() : stylePreset.trim())
+      console.log('FRONTEND_USER_STYLE_SELECTED', { genre: selectedStyle })
+      console.log('FRONTEND_NO_HARDCODED_GENRE_PROFILE', { hardcoded: false, selected_style: selectedStyle })
 
       const options: { 
         bars?: number
@@ -1348,6 +1356,12 @@ export default function GeneratePage() {
         referenceAnalysisId?: string
         adaptationStrength?: AdaptationStrength
         guidanceMode?: GuidanceMode
+        genre?: string
+        mood?: string
+        energy?: string
+        stylePrompt?: string
+        bpm?: number
+        key?: string
       } = {}
       
       if (arrangementType === 'bars') {
@@ -1413,6 +1427,21 @@ export default function GeneratePage() {
 
       options.variationCount = 3
       options.autoSave = false
+      options.genre = selectedStyle
+      options.mood = moodInput.trim() || undefined
+      options.energy = energyInput.trim() || undefined
+      options.stylePrompt = stylePromptInput.trim() || undefined
+      options.bpm = Number.isFinite(loopBpm) ? loopBpm : 120
+      options.key = keyInput.trim() || undefined
+      console.log('FRONTEND_STYLE_PAYLOAD_SENT', {
+        genre: options.genre,
+        mood: options.mood || null,
+        energy: options.energy || null,
+        style_prompt: options.stylePrompt || null,
+        bpm: options.bpm,
+        key: options.key || null,
+        variation_count: options.variationCount,
+      })
 
       // Include reference guidance parameters when a reference has been analyzed
       if (referenceAnalysisId) {
@@ -1587,7 +1616,8 @@ export default function GeneratePage() {
       const meta = jobMetadataById[jobId] || {}
       const statusMeta = jobStatusById[jobId] || {}
       const variationIndex = typeof meta.variation_index === 'number' ? meta.variation_index : undefined
-      const personality = meta.personality || 'mainstream'
+      const personality = meta.personality || 'clean/main'
+      console.log('FRONTEND_BACKEND_PERSONALITY_LABEL_USED', { job_id: jobId, personality })
       const matchedCandidate = previewCandidates.find((candidate) => (candidate as any).render_job_id === jobId || (statusMeta.arrangement_id != null && candidate.arrangement_id === statusMeta.arrangement_id))
       if (matchedCandidate) return { ...matchedCandidate, slotKey: jobId, variation_index: variationIndex, personality, error_message: statusMeta.error_message }
       const statusNorm = (statusMeta.status || '').toString().toLowerCase()
@@ -1867,6 +1897,22 @@ export default function GeneratePage() {
               </div>
 
               {/* V1: Style Preset (shown when preset mode) */}
+              <div>
+                <label htmlFor="custom-genre-style" className="block text-sm font-medium text-gray-300 mb-2">
+                  Genre / Style (free text)
+                </label>
+                <input
+                  id="custom-genre-style"
+                  type="text"
+                  value={customGenreStyle}
+                  onChange={(e) => setCustomGenreStyle(e.target.value)}
+                  placeholder="e.g., r&b, gospel worship, afrobeat, boom bap, cinematic soul, custom style"
+                  className="w-full px-4 py-3 bg-gray-800 border border-gray-700 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  disabled={isGenerating}
+                />
+                <p className="mt-2 text-sm text-blue-300">Selected style: {(customGenreStyle.trim() || (styleMode === 'naturalLanguage' ? styleTextInput.trim() : stylePreset.trim()) || 'none')}</p>
+              </div>
+
               {styleMode === 'preset' && (
                 <div>
                   <label
@@ -1943,6 +1989,12 @@ export default function GeneratePage() {
                   />
                 </div>
               )}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <input aria-label="Mood" value={moodInput} onChange={(e) => setMoodInput(e.target.value)} placeholder="Mood (optional)" className="w-full px-4 py-3 bg-gray-800 border border-gray-700 rounded-lg text-white" disabled={isGenerating} />
+                <input aria-label="Energy" value={energyInput} onChange={(e) => setEnergyInput(e.target.value)} placeholder="Energy (optional)" className="w-full px-4 py-3 bg-gray-800 border border-gray-700 rounded-lg text-white" disabled={isGenerating} />
+                <input aria-label="Style Prompt" value={stylePromptInput} onChange={(e) => setStylePromptInput(e.target.value)} placeholder="style_prompt (optional)" className="w-full px-4 py-3 bg-gray-800 border border-gray-700 rounded-lg text-white" disabled={isGenerating} />
+                <input aria-label="Key" value={keyInput} onChange={(e) => setKeyInput(e.target.value)} placeholder="Key (optional)" className="w-full px-4 py-3 bg-gray-800 border border-gray-700 rounded-lg text-white" disabled={isGenerating} />
+              </div>
 
               {/* Style Preset (kept for preset mode) */}
 
@@ -2313,7 +2365,7 @@ export default function GeneratePage() {
                       className={`rounded-lg border p-4 space-y-3 ${isSelected ? 'border-blue-500 bg-blue-950/30' : 'border-gray-700 bg-gray-800/40'}`}
                     >
                       <div className="flex items-center justify-between gap-2">
-                        <p className="text-sm text-white font-medium">Variation {(candidate as any).variation_index != null ? Number((candidate as any).variation_index) + 1 : `#${candidate.arrangement_id}`} — {((candidate as any).personality || 'mainstream').toString()}</p>
+                        <p className="text-sm text-white font-medium">Variation {(candidate as any).variation_index != null ? Number((candidate as any).variation_index) + 1 : `#${candidate.arrangement_id}`} — {((candidate as any).personality || 'clean/main').toString()}</p>
                         <SectionStateBadge state={badgeState} />
                       </div>
 

@@ -1219,6 +1219,11 @@ export async function renderLoopAsync(
     referenceAnalysisId?: string;
     adaptationStrength?: string;
     guidanceMode?: string;
+    mood?: string;
+    energy?: string;
+    stylePrompt?: string;
+    bpm?: number;
+    key?: string;
   }
 ): Promise<RenderAsyncResponse> {
   try {
@@ -1252,6 +1257,11 @@ export async function renderLoopAsync(
     if (options?.referenceAnalysisId) requestBody.reference_analysis_id = options.referenceAnalysisId;
     if (options?.adaptationStrength) requestBody.adaptation_strength = options.adaptationStrength;
     if (options?.guidanceMode) requestBody.guidance_mode = options.guidanceMode;
+    if (options?.mood) requestBody.mood = options.mood;
+    if (options?.energy) requestBody.energy = options.energy;
+    if (options?.stylePrompt) requestBody.style_prompt = options.stylePrompt;
+    if (options?.bpm !== undefined) requestBody.bpm = options.bpm;
+    if (options?.key) requestBody.key = options.key;
 
     const url = getUploadUrl(`/v1/loops/${loopId}/render-async`);
     console.log("API_CALL", url);
