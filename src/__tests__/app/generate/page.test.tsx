@@ -844,7 +844,7 @@ describe('Job failure path', () => {
     })
 
     await waitFor(() => {
-      expect(screen.getByText(/Render failed: out of memory/i)).toBeInTheDocument()
+      expect(screen.getAllByText(/Render failed: out of memory/i).length).toBeGreaterThan(0)
     })
   })
 
@@ -871,7 +871,7 @@ describe('Job failure path', () => {
     })
 
     await waitFor(() => {
-      expect(screen.getByText(/Render failed/i)).toBeInTheDocument()
+      expect(screen.getAllByText(/Render failed/i).length).toBeGreaterThan(0)
     })
     expect(getArrangementStatus).not.toHaveBeenCalled()
   })
@@ -1093,7 +1093,7 @@ describe('Failed job clears generating state', () => {
     })
 
     await waitFor(() => {
-      expect(screen.getByText(/Worker crashed/i)).toBeInTheDocument()
+      expect(screen.getAllByText(/Worker crashed/i).length).toBeGreaterThan(0)
     })
     // Generate button must be re-enabled after failure
     const generateBtn = screen.getByRole('button', { name: /Generate Arrangement/i })
@@ -2343,5 +2343,117 @@ describe('render-async job id extraction bootstrap', () => {
       expect(getJobStatus).toHaveBeenCalledWith('job-from-id')
     })
     expect(console.log).toHaveBeenCalledWith('JOB_IDS_EXTRACTED', expect.objectContaining({ job_ids: ['job-from-id'] }))
+  })
+})
+
+describe('partial multi-variation completion handling', () => {
+  it('renders 3 variation slots, sorted 1/2/3, includes failed slot, and soft-handles 422 history', async () => {
+    const LoopArchitectApiErrorCtor = (jest.requireMock('@/../../api/client') as any).LoopArchitectApiError
+    ;(renderLoopAsync as jest.Mock).mockResolvedValue({
+      jobs: [
+        { job_id: 'job-1', personality: 'clean/mainstream', variation_index: 0 },
+        { job_id: 'job-2', personality: 'dark/drop-heavy', variation_index: 1 },
+        { job_id: 'job-3', personality: 'cinematic/experimental', variation_index: 2 },
+      ],
+    })
+    ;(getJobStatus as jest.Mock).mockImplementation((jobId: string) => {
+      if (jobId === 'job-1') return Promise.resolve({ status: 'finished', arrangement_id: 501, output_url: 'https://cdn.example.com/501.wav' })
+      if (jobId === 'job-2') return Promise.resolve({ status: 'finished', arrangement_id: 502, output_url: 'https://cdn.example.com/502.wav' })
+      return Promise.resolve({ status: 'failed', error_message: 'Worker crashed' })
+    })
+    ;(getArrangementStatus as jest.Mock).mockImplementation((id: number) => Promise.resolve(makeArrangementStatus({ id })))
+    ;(listArrangements as jest.Mock).mockRejectedValue(new LoopArchitectApiErrorCtor('unprocessable', 422))
+
+    await renderPage('1')
+    const loopInput = screen.getByRole('spinbutton', { name: /Loop ID/i })
+    await act(async () => { fireEvent.change(loopInput, { target: { value: '1' } }) })
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: /Generate Arrangement/i })) })
+    await flushPromises()
+
+    await waitFor(() => {
+      expect(screen.getByText(/Variation 1 — clean\/mainstream/i)).toBeInTheDocument()
+      expect(screen.getByText(/Variation 2 — dark\/drop-heavy/i)).toBeInTheDocument()
+      expect(screen.getByText(/Variation 3 — cinematic\/experimental/i)).toBeInTheDocument()
+    })
+    expect(screen.getByText(/Failed \/ unavailable/i)).toBeInTheDocument()
+    expect(screen.getAllByText(/Worker crashed/i).length).toBeGreaterThan(0)
+    expect(console.log).toHaveBeenCalledWith('FRONTEND_ARRANGEMENT_DETAIL_422_SOFT_HANDLED', expect.any(Object))
+    expect(console.log).toHaveBeenCalledWith('FRONTEND_VARIATION_SORTED', expect.arrayContaining([
+      expect.objectContaining({ variation_index: 0 }),
+      expect.objectContaining({ variation_index: 1 }),
+      expect.objectContaining({ variation_index: 2 }),
+    ]))
+  })
+
+  it('does not show "Only one variation returned by backend" when 3 jobs were requested but one failed', async () => {
+    ;(renderLoopAsync as jest.Mock).mockResolvedValue({
+      jobs: [
+        { job_id: 'job-a', personality: 'clean/mainstream', variation_index: 0 },
+        { job_id: 'job-b', personality: 'dark/drop-heavy', variation_index: 1 },
+        { job_id: 'job-c', personality: 'cinematic/experimental', variation_index: 2 },
+      ],
+    })
+    ;(getJobStatus as jest.Mock).mockImplementation((jobId: string) => {
+      if (jobId === 'job-c') return Promise.resolve({ status: 'failed', error_message: 'Preview render failed upstream' })
+      return Promise.resolve({ status: 'finished', arrangement_id: jobId === 'job-a' ? 611 : 612, output_url: `https://cdn.example.com/${jobId}.wav` })
+    })
+    ;(getArrangementStatus as jest.Mock).mockImplementation((id: number) => Promise.resolve(makeArrangementStatus({ id })))
+
+    await renderPage('1')
+    const loopInput = screen.getByRole('spinbutton', { name: /Loop ID/i })
+    await act(async () => { fireEvent.change(loopInput, { target: { value: '1' } }) })
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: /Generate Arrangement/i })) })
+    await flushPromises()
+
+    await waitFor(() => {
+      expect(screen.getByText(/Variation 3 — cinematic\/experimental/i)).toBeInTheDocument()
+      expect(screen.getByText(/Failed \/ unavailable/i)).toBeInTheDocument()
+    })
+    expect(screen.queryByText(/Only one variation returned by backend\./i)).not.toBeInTheDocument()
+  })
+
+  it('locks failed variation terminal state and does not regress to processing', async () => {
+    ;(renderLoopAsync as jest.Mock).mockResolvedValue({ jobs: [{ job_id: 'job-lock', personality: 'cinematic/experimental', variation_index: 2 }] })
+    ;(getJobStatus as jest.Mock)
+      .mockResolvedValueOnce({ status: 'failed', error_message: 'Render failed hard' })
+      .mockResolvedValueOnce({ status: 'processing' })
+
+    await renderPage('1')
+    const loopInput = screen.getByRole('spinbutton', { name: /Loop ID/i })
+    await act(async () => { fireEvent.change(loopInput, { target: { value: '1' } }) })
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: /Generate Arrangement/i })) })
+    await flushPromises()
+
+    await waitFor(() => {
+      expect(screen.getByText(/Failed \/ unavailable/i)).toBeInTheDocument()
+    })
+    expect(screen.queryByText(/Rendering — preview will appear when ready\./i)).not.toBeInTheDocument()
+  })
+
+  it('marks missing output terminal jobs as failed/unavailable placeholders', async () => {
+    ;(renderLoopAsync as jest.Mock).mockResolvedValue({
+      jobs: [
+        { job_id: 'job-mo-1', personality: 'clean/mainstream', variation_index: 0 },
+        { job_id: 'job-mo-2', personality: 'dark/drop-heavy', variation_index: 1 },
+        { job_id: 'job-mo-3', personality: 'cinematic/experimental', variation_index: 2 },
+      ],
+    })
+    ;(getJobStatus as jest.Mock).mockImplementation((id: string) => Promise.resolve(
+      id === 'job-mo-3'
+        ? { status: 'finished', arrangement_id: null, output_url: null }
+        : { status: 'finished', arrangement_id: id === 'job-mo-1' ? 711 : 712, output_url: `https://cdn.example.com/${id}.wav` }
+    ))
+    ;(getArrangementStatus as jest.Mock).mockImplementation((id: number) => Promise.resolve(makeArrangementStatus({ id })))
+
+    await renderPage('1')
+    const loopInput = screen.getByRole('spinbutton', { name: /Loop ID/i })
+    await act(async () => { fireEvent.change(loopInput, { target: { value: '1' } }) })
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: /Generate Arrangement/i })) })
+    await flushPromises()
+
+    await waitFor(() => {
+      expect(screen.getByText(/Variation 3 — cinematic\/experimental/i)).toBeInTheDocument()
+      expect(screen.getAllByText(/Failed \/ unavailable/i).length).toBeGreaterThan(0)
+    })
   })
 })

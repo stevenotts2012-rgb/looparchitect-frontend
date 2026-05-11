@@ -137,6 +137,7 @@ export default function GeneratePage() {
   const [currentJobId, setCurrentJobId] = useState<string | null>(null)
   const [currentJobIds, setCurrentJobIds] = useState<string[]>([])
   const [jobMetadataById, setJobMetadataById] = useState<Record<string, { personality?: string; variation_index?: number; variation_seed?: number }>>({})
+  const [jobStatusById, setJobStatusById] = useState<Record<string, { status?: string; output_url?: string | null; arrangement_id?: number | null; error_message?: string | null }>>({})
 
   const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null)
   const pollingErrorCountRef = useRef<number>(0)
@@ -165,6 +166,7 @@ export default function GeneratePage() {
   // handlers from surfacing stale errors after a successful completion.
   const generationCompletedRef = useRef(false)
   const terminalJobIdsRef = useRef<Set<string>>(new Set())
+  const terminalVariationIdsRef = useRef<Set<string>>(new Set())
   const history422LoopRef = useRef<string | null>(null)
 
   const clearPreviewCandidates = () => {
@@ -250,6 +252,7 @@ export default function GeneratePage() {
       if (err instanceof LoopArchitectApiError) {
         if (err.status === 422) {
           history422LoopRef.current = requestedLoopKey
+          console.log('FRONTEND_ARRANGEMENT_DETAIL_422_SOFT_HANDLED', { loop_id: requestedLoopId ?? null, status_filter: statusFilter || historyStatusFilter })
           setHistoryError('Arrangement history is temporarily unavailable for this loop (422). Please verify loop data and try again.')
           return
         }
@@ -660,6 +663,38 @@ export default function GeneratePage() {
       jobPollInFlightRef.current = true
       try {
         const job = await getJobStatus(currentJobId)
+        const nextStatus = (job.status ?? job.state ?? job.job_status ?? '').toString().toLowerCase()
+        const nextOutputUrl = getJobSignedAudioUrl(job)
+        const nextArrangementId = job.arrangement_id ?? job?.result?.arrangement_id ?? null
+        const isNextTerminal = ['done', 'completed', 'success', 'finished', 'failed', 'error', 'cancelled', 'missing_output'].includes(nextStatus)
+        setJobStatusById((current) => {
+          const existing = current[currentJobId]
+          const existingStatus = (existing?.status ?? '').toString().toLowerCase()
+          const isExistingTerminal = ['done', 'completed', 'success', 'finished', 'failed', 'error', 'cancelled', 'missing_output'].includes(existingStatus)
+          if (isExistingTerminal && !isNextTerminal) {
+            console.log('FRONTEND_TERMINAL_STATE_PRESERVED', { job_id: currentJobId, existing_status: existingStatus, dropped_status: nextStatus })
+            return current
+          }
+          if (isExistingTerminal && isNextTerminal) {
+            const hasBetterData = (!!nextOutputUrl && !existing?.output_url) || (!!nextArrangementId && !existing?.arrangement_id)
+            if (!hasBetterData) {
+              console.log('FRONTEND_TERMINAL_VARIATION_LOCKED', { job_id: currentJobId, status: existingStatus })
+              return current
+            }
+          }
+          if (isNextTerminal) {
+            terminalVariationIdsRef.current.add(currentJobId)
+          }
+          return {
+            ...current,
+            [currentJobId]: {
+              status: nextStatus || job.status,
+              output_url: nextOutputUrl,
+              arrangement_id: nextArrangementId,
+              error_message: job.error_message ?? null,
+            },
+          }
+        })
         jobPollingAttemptRef.current += 1
         console.log("RAW_JOB_RESPONSE", job)
         console.log("POLL_TICK", { job_id: currentJobId, attempt: jobPollingAttemptRef.current, status: job.status ?? job.state ?? job.job_status ?? 'unknown' })
@@ -707,6 +742,7 @@ export default function GeneratePage() {
           const allTerminalNow = currentJobIds.length <= 1 || currentJobIds.every((id) => terminalJobIdsRef.current.has(id))
           if (allTerminalNow) {
             console.log('FRONTEND_ALL_JOBS_TERMINAL', { job_ids: currentJobIds.length > 0 ? currentJobIds : [currentJobId] })
+            console.log('FRONTEND_ALL_VARIATIONS_TERMINAL', { job_ids: currentJobIds.length > 0 ? currentJobIds : [currentJobId] })
           }
           console.log('JOB_TERMINAL', { job_id: currentJobId, status: effectiveStatus })
           if (jobPollingIntervalRef.current) {
@@ -893,10 +929,12 @@ export default function GeneratePage() {
         } else if (isFailedStatus) {
           terminalJobIdsRef.current.add(currentJobId)
           console.log('JOB_TERMINAL', { job_id: currentJobId, status: effectiveStatus })
+          console.log('FRONTEND_VARIATION_JOB_FAILED_CARD', { job_id: currentJobId, variation_index: jobMetadataById[currentJobId]?.variation_index, personality: jobMetadataById[currentJobId]?.personality, error_message: job.error_message ?? null })
           setError(job.error_message || 'Render job failed. Please try again.')
           const allTerminal = currentJobIds.length > 0 && currentJobIds.every((id) => terminalJobIdsRef.current.has(id))
           if (allTerminal) {
             console.log('FRONTEND_ALL_JOBS_TERMINAL', { job_ids: currentJobIds })
+            console.log('FRONTEND_ALL_VARIATIONS_TERMINAL', { job_ids: currentJobIds })
             finalizeGeneration()
           }
         }
@@ -1271,6 +1309,10 @@ export default function GeneratePage() {
     setActiveAdaptationStrength(adaptationStrength)
     setActiveGuidanceMode(guidanceMode)
     setReferenceStructureSummary(null)
+    setCurrentJobIds([])
+    setCurrentJobId(null)
+    setJobMetadataById({})
+    setJobStatusById({})
     if (audioUrl) {
       URL.revokeObjectURL(audioUrl)
       setAudioUrl(null)
@@ -1537,6 +1579,27 @@ export default function GeneratePage() {
         setAudioUrl(null)
       }
     }
+  }
+
+  const shouldUseRequestedSlots = currentJobIds.length > 0 && currentJobIds.some((id) => Boolean(jobMetadataById[id]))
+  const cardsToRender = (shouldUseRequestedSlots
+    ? currentJobIds.map((jobId, idx) => {
+      const meta = jobMetadataById[jobId] || {}
+      const statusMeta = jobStatusById[jobId] || {}
+      const variationIndex = typeof meta.variation_index === 'number' ? meta.variation_index : undefined
+      const personality = meta.personality || 'mainstream'
+      const matchedCandidate = previewCandidates.find((candidate) => (candidate as any).render_job_id === jobId || (statusMeta.arrangement_id != null && candidate.arrangement_id === statusMeta.arrangement_id))
+      if (matchedCandidate) return { ...matchedCandidate, slotKey: jobId, variation_index: variationIndex, personality, error_message: statusMeta.error_message }
+      const statusNorm = (statusMeta.status || '').toString().toLowerCase()
+      const terminalWithoutOutput = ['done', 'completed', 'success', 'finished'].includes(statusNorm) && !statusMeta.output_url
+      const fallbackStatus = terminalWithoutOutput ? 'missing_output' : (statusMeta.status || 'failed')
+      return { slotKey: jobId, arrangement_id: -(idx + 1), status: fallbackStatus, audioUrl: statusMeta.output_url || null, variation_index: variationIndex ?? idx, personality, error_message: statusMeta.error_message || null } as any
+    })
+    : previewCandidates)
+    .sort((a: any, b: any) => Number(a.variation_index ?? 999) - Number(b.variation_index ?? 999))
+
+  if (cardsToRender.length > 0) {
+    console.log('FRONTEND_VARIATION_SORTED', cardsToRender.map((c: any) => ({ variation_index: c.variation_index, arrangement_id: c.arrangement_id, status: c.status })))
   }
 
   return (
@@ -2212,7 +2275,7 @@ export default function GeneratePage() {
             onFilterChange={handleFilterChange}
           />
 
-          {previewCandidates.length > 0 && (
+          {cardsToRender.length > 0 && (
             <div className="bg-gray-900/50 border border-gray-800 rounded-lg p-6 space-y-4">
               <div className="flex items-center justify-between">
                 <h3 className="text-lg font-semibold text-white">Preview Variations</h3>
@@ -2225,17 +2288,17 @@ export default function GeneratePage() {
                 </button>
               </div>
 
-              {previewCandidates.length === 1 && currentJobIds.length < 3 && (
+              {cardsToRender.length === 1 && currentJobIds.length < 3 && (
                 <p className="text-sm text-amber-400" role="alert">
                   Only one variation returned by backend.
                 </p>
               )}
 
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                {previewCandidates.map((candidate) => {
+                {cardsToRender.map((candidate: any) => {
                   const isSelected = selectedPreviewId === candidate.arrangement_id
                   const isDone = candidate.status === 'done' || candidate.status === 'completed'
-                  const isFailed = candidate.status === 'failed' || candidate.status === 'error' || candidate.status === 'cancelled'
+                  const isFailed = candidate.status === 'failed' || candidate.status === 'error' || candidate.status === 'cancelled' || candidate.status === 'missing_output'
                   const isPending =
                     candidate.status === 'queued' ||
                     candidate.status === 'pending' ||
@@ -2308,7 +2371,10 @@ export default function GeneratePage() {
                           )
                         })()
                       ) : isFailed ? (
-                        <p className="text-xs text-red-300">Generation failed. Try generating a new variation.</p>
+                        <div className="space-y-1">
+                          <p className="text-xs text-red-300">Failed / unavailable</p>
+                          {candidate.arrangement_id <= 0 && candidate.error_message ? <p className="text-xs text-red-200">{candidate.error_message}</p> : null}
+                        </div>
                       ) : (
                         <p className="text-xs text-gray-400">
                           {isPending ? 'Rendering — preview will appear when ready.' : 'Preview will appear when render finishes.'}
@@ -2318,16 +2384,18 @@ export default function GeneratePage() {
                       <div className="flex gap-2">
                         <button
                           onClick={() => {
+                            if (candidate.arrangement_id <= 0) return
                             setSelectedPreviewId(candidate.arrangement_id)
                             setError(null)
                           }}
+                          disabled={candidate.arrangement_id <= 0}
                           className="flex-1 px-3 py-2 text-sm bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition-colors"
                         >
                           Track
                         </button>
                         <button
                           onClick={() => handleSavePreview(candidate.arrangement_id)}
-                          disabled={!isDone || candidate.isSaved}
+                          disabled={candidate.arrangement_id <= 0 || !isDone || candidate.isSaved}
                           className="flex-1 px-3 py-2 text-sm bg-green-600 hover:bg-green-700 disabled:bg-gray-700 disabled:cursor-not-allowed text-white rounded-lg transition-colors"
                         >
                           {candidate.isSaved ? 'Saved' : 'Save'}
