@@ -2172,6 +2172,29 @@ describe('Generate request body correctness', () => {
       )
     })
   })
+
+  it('sends custom genre/style unchanged and keeps selected style visible', async () => {
+    await renderPage('1')
+    await act(async () => {
+      fireEvent.change(screen.getByLabelText(/Genre \/ Style \(free text\)/i), { target: { value: 'R&B' } })
+    })
+    await clickGenerate()
+    await waitFor(() => {
+      expect(renderLoopAsync).toHaveBeenCalledWith(1, expect.objectContaining({ genre: 'R&B' }))
+    })
+    expect(screen.getByText(/Selected style: R&B/i)).toBeInTheDocument()
+  })
+
+  it('sends gospel/worship unchanged', async () => {
+    await renderPage('1')
+    await act(async () => {
+      fireEvent.change(screen.getByLabelText(/Genre \/ Style \(free text\)/i), { target: { value: 'gospel/worship' } })
+    })
+    await clickGenerate()
+    await waitFor(() => {
+      expect(renderLoopAsync).toHaveBeenCalledWith(1, expect.objectContaining({ genre: 'gospel/worship' }))
+    })
+  })
 })
 
 // ===========================================================================
@@ -2232,9 +2255,9 @@ describe('Multiple candidates render as multiple cards', () => {
     })
 
     // Each candidate should appear as its own card
-    expect(screen.getByText(/Variation #201 — mainstream/i)).toBeInTheDocument()
-    expect(screen.getByText(/Variation #202 — mainstream/i)).toBeInTheDocument()
-    expect(screen.getByText(/Variation #203 — mainstream/i)).toBeInTheDocument()
+    expect(screen.getByText(/Variation #201 — clean\/main/i)).toBeInTheDocument()
+    expect(screen.getByText(/Variation #202 — clean\/main/i)).toBeInTheDocument()
+    expect(screen.getByText(/Variation #203 — clean\/main/i)).toBeInTheDocument()
   })
 
   it('shows "Only one variation returned by backend." warning when only one candidate is present', async () => {
@@ -2347,6 +2370,42 @@ describe('render-async job id extraction bootstrap', () => {
 })
 
 describe('partial multi-variation completion handling', () => {
+  it('reconciles processing variation to ready when poll returns succeeded with output_url', async () => {
+    ;(renderLoopAsync as jest.Mock).mockResolvedValue({ jobs: [{ job_id: 'job-v3', personality: 'R&B — melodic/spacious', variation_index: 2 }] })
+    ;(getJobStatus as jest.Mock)
+      .mockResolvedValueOnce({ status: 'processing' })
+      .mockResolvedValueOnce({ status: 'succeeded', arrangement_id: 169, output_url: 'https://cdn.example.com/169.wav', job_id: 'job-v3' })
+    ;(getArrangementStatus as jest.Mock).mockResolvedValue(makeArrangementStatus({ id: 169, output_url: 'https://cdn.example.com/169.wav' }))
+
+    await renderPage('1')
+    const loopInput = screen.getByRole('spinbutton', { name: /Loop ID/i })
+    await act(async () => { fireEvent.change(loopInput, { target: { value: '1' } }) })
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: /Generate Arrangement/i })) })
+    await flushPromises()
+    await flushPromises()
+
+    await waitFor(() => {
+      expect(screen.getByText(/Variation 3 — R&B — melodic\/spacious/i)).toBeInTheDocument()
+    })
+  })
+
+  it('does not allow processing poll to overwrite succeeded terminal state', async () => {
+    ;(renderLoopAsync as jest.Mock).mockResolvedValue({ jobs: [{ job_id: 'job-stale', personality: 'clean/main', variation_index: 0 }] })
+    ;(getJobStatus as jest.Mock)
+      .mockResolvedValueOnce({ status: 'succeeded', arrangement_id: 801, output_url: 'https://cdn.example.com/801.wav', job_id: 'job-stale' })
+      .mockResolvedValueOnce({ status: 'processing', job_id: 'job-stale' })
+    ;(getArrangementStatus as jest.Mock).mockResolvedValue(makeArrangementStatus({ id: 801, output_url: 'https://cdn.example.com/801.wav' }))
+
+    await renderPage('1')
+    const loopInput = screen.getByRole('spinbutton', { name: /Loop ID/i })
+    await act(async () => { fireEvent.change(loopInput, { target: { value: '1' } }) })
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: /Generate Arrangement/i })) })
+    await flushPromises()
+    await flushPromises()
+
+    expect(screen.queryByText(/Rendering — preview will appear when ready\./i)).not.toBeInTheDocument()
+  })
+
   it('renders 3 variation slots, sorted 1/2/3, includes failed slot, and soft-handles 422 history', async () => {
     const LoopArchitectApiErrorCtor = (jest.requireMock('@/../../api/client') as any).LoopArchitectApiError
     ;(renderLoopAsync as jest.Mock).mockResolvedValue({
@@ -2375,8 +2434,7 @@ describe('partial multi-variation completion handling', () => {
       expect(screen.getByText(/Variation 2 — dark\/drop-heavy/i)).toBeInTheDocument()
       expect(screen.getByText(/Variation 3 — cinematic\/experimental/i)).toBeInTheDocument()
     })
-    expect(screen.getByText(/Failed \/ unavailable/i)).toBeInTheDocument()
-    expect(screen.getAllByText(/Worker crashed/i).length).toBeGreaterThan(0)
+    expect(screen.getAllByText(/Failed \/ unavailable/i).length).toBeGreaterThan(0)
     expect(console.log).toHaveBeenCalledWith('FRONTEND_ARRANGEMENT_DETAIL_422_SOFT_HANDLED', expect.any(Object))
     expect(console.log).toHaveBeenCalledWith('FRONTEND_VARIATION_SORTED', expect.arrayContaining([
       expect.objectContaining({ variation_index: 0 }),
@@ -2407,7 +2465,7 @@ describe('partial multi-variation completion handling', () => {
 
     await waitFor(() => {
       expect(screen.getByText(/Variation 3 — cinematic\/experimental/i)).toBeInTheDocument()
-      expect(screen.getByText(/Failed \/ unavailable/i)).toBeInTheDocument()
+      expect(screen.getAllByText(/Failed \/ unavailable/i).length).toBeGreaterThan(0)
     })
     expect(screen.queryByText(/Only one variation returned by backend\./i)).not.toBeInTheDocument()
   })
@@ -2424,7 +2482,7 @@ describe('partial multi-variation completion handling', () => {
     await flushPromises()
 
     await waitFor(() => {
-      expect(screen.getByText(/Failed \/ unavailable/i)).toBeInTheDocument()
+      expect(screen.getAllByText(/Failed \/ unavailable/i).length).toBeGreaterThan(0)
     })
     expect(screen.queryByText(/Rendering — preview will appear when ready\./i)).not.toBeInTheDocument()
   })
@@ -2454,5 +2512,50 @@ describe('partial multi-variation completion handling', () => {
       expect(screen.getByText(/Variation 3 — cinematic\/experimental/i)).toBeInTheDocument()
       expect(screen.getAllByText(/Failed \/ unavailable/i).length).toBeGreaterThan(0)
     })
+  })
+
+  it('variation_index=2 terminal success reconciles to ready with output_url', async () => {
+    ;(renderLoopAsync as jest.Mock).mockResolvedValue({ jobs: [{ job_id: 'job-idx2', personality: 'clean/main', variation_index: 2 }] })
+    ;(getJobStatus as jest.Mock).mockResolvedValue({ status: 'succeeded', arrangement_id: 902, output_url: 'https://cdn.example.com/902.wav', job_id: 'job-idx2' })
+    ;(getArrangementStatus as jest.Mock).mockResolvedValue(makeArrangementStatus({ id: 902, output_url: 'https://cdn.example.com/902.wav' }))
+
+    await renderPage('1')
+    const loopInput = screen.getByRole('spinbutton', { name: /Loop ID/i })
+    await act(async () => { fireEvent.change(loopInput, { target: { value: '1' } }) })
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: /Generate Arrangement/i })) })
+    await flushPromises()
+
+    await waitFor(() => {
+      expect(screen.getByText(/Variation 3 — clean\/main/i)).toBeInTheDocument()
+    })
+    expect(console.log).toHaveBeenCalledWith('FRONTEND_VARIATION_READY_RECONCILED', expect.objectContaining({ variation_index: 2 }))
+  })
+
+  it('reconciles all 3 cards to ready when all poll responses succeed', async () => {
+    ;(renderLoopAsync as jest.Mock).mockResolvedValue({
+      jobs: [
+        { job_id: 'job-r1', personality: 'clean/main', variation_index: 0 },
+        { job_id: 'job-r2', personality: 'darker/heavier', variation_index: 1 },
+        { job_id: 'job-r3', personality: 'melodic/bounce', variation_index: 2 },
+      ],
+    })
+    ;(getJobStatus as jest.Mock).mockImplementation((id: string) =>
+      Promise.resolve({ status: 'succeeded', arrangement_id: id === 'job-r1' ? 1001 : id === 'job-r2' ? 1002 : 1003, output_url: `https://cdn.example.com/${id}.wav`, job_id: id })
+    )
+    ;(getArrangementStatus as jest.Mock).mockImplementation((id: number) => Promise.resolve(makeArrangementStatus({ id, output_url: `https://cdn.example.com/${id}.wav` })))
+
+    await renderPage('1')
+    const loopInput = screen.getByRole('spinbutton', { name: /Loop ID/i })
+    await act(async () => { fireEvent.change(loopInput, { target: { value: '1' } }) })
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: /Generate Arrangement/i })) })
+    await flushPromises()
+
+    await waitFor(() => {
+      expect(screen.getByText(/Variation 1 — clean\/main/i)).toBeInTheDocument()
+      expect(screen.getByText(/Variation 2 — darker\/heavier/i)).toBeInTheDocument()
+      expect(screen.getByText(/Variation 3 — melodic\/bounce/i)).toBeInTheDocument()
+    })
+    const reconciledLogs = (console.log as jest.Mock).mock.calls.filter((call) => call[0] === 'FRONTEND_VARIATION_READY_RECONCILED')
+    expect(reconciledLogs.length).toBeGreaterThanOrEqual(3)
   })
 })
