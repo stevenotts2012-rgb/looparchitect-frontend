@@ -188,6 +188,8 @@ export default function GeneratePage() {
     // with a clean slate.
     candidateDownloadAttemptsRef.current.clear()
   }
+  const isTerminalSuccessStatus = (status: string | null | undefined): boolean =>
+    ['succeeded', 'success', 'done', 'completed', 'finished'].includes((status || '').toString().toLowerCase())
 
 
   const stopAllPolling = useCallback(() => {
@@ -596,12 +598,17 @@ export default function GeneratePage() {
               }
             }
 
-            return {
+            const nextCandidate = {
               ...candidate,
               status: status.status,
               arrangementStatus: status,
               audioUrl: nextAudioUrl,
             }
+            if (isTerminalSuccessStatus(candidate.status) && !isTerminalSuccessStatus(nextCandidate.status)) {
+              console.log('FRONTEND_STALE_PROCESSING_STATE_DROPPED', { arrangement_id: candidate.arrangement_id, existing_status: candidate.status, dropped_status: nextCandidate.status })
+              return candidate
+            }
+            return nextCandidate
           } catch (statusError) {
             console.error(
               `[variation-preview] status-poll-failed – candidate ${candidate.arrangement_id}:`,
@@ -671,12 +678,13 @@ export default function GeneratePage() {
         const nextStatus = (job.status ?? job.state ?? job.job_status ?? '').toString().toLowerCase()
         const nextOutputUrl = getJobSignedAudioUrl(job)
         const nextArrangementId = job.arrangement_id ?? job?.result?.arrangement_id ?? null
-        const isNextTerminal = ['done', 'completed', 'success', 'finished', 'failed', 'error', 'cancelled', 'missing_output'].includes(nextStatus)
+        const isNextTerminal = ['succeeded', 'done', 'completed', 'success', 'finished', 'failed', 'error', 'cancelled', 'missing_output'].includes(nextStatus)
         setJobStatusById((current) => {
           const existing = current[currentJobId]
           const existingStatus = (existing?.status ?? '').toString().toLowerCase()
-          const isExistingTerminal = ['done', 'completed', 'success', 'finished', 'failed', 'error', 'cancelled', 'missing_output'].includes(existingStatus)
+          const isExistingTerminal = ['succeeded', 'done', 'completed', 'success', 'finished', 'failed', 'error', 'cancelled', 'missing_output'].includes(existingStatus)
           if (isExistingTerminal && !isNextTerminal) {
+            console.log('FRONTEND_STALE_PROCESSING_STATE_DROPPED', { job_id: currentJobId, existing_status: existingStatus, dropped_status: nextStatus })
             console.log('FRONTEND_TERMINAL_STATE_PRESERVED', { job_id: currentJobId, existing_status: existingStatus, dropped_status: nextStatus })
             return current
           }
@@ -718,7 +726,7 @@ export default function GeneratePage() {
         // Resolve terminal state from job_terminal_state or the alternative terminal_state field.
         const effectiveTerminalState: string | null = job.job_terminal_state ?? job.terminal_state ?? null
 
-        const SUCCESS_STATUSES = new Set(['success', 'finished', 'completed', 'done'])
+        const SUCCESS_STATUSES = new Set(['succeeded', 'success', 'finished', 'completed', 'done'])
         const FAILED_STATUSES = new Set(['failed', 'error', 'cancelled'])
         const isSuccessStatus = SUCCESS_STATUSES.has(effectiveStatus) || effectiveTerminalState === 'success'
         const isFailedStatus = FAILED_STATUSES.has(effectiveStatus) || FAILED_STATUSES.has(effectiveTerminalState ?? '')
@@ -743,6 +751,7 @@ export default function GeneratePage() {
         })
 
         if (isSuccessStatus) {
+          console.log('FRONTEND_POLL_TERMINAL_SUCCESS_RECEIVED', { job_id: currentJobId, status: effectiveStatus, output_url: nextOutputUrl ?? null, arrangement_id: effectiveArrangementId })
           terminalJobIdsRef.current.add(currentJobId)
           const allTerminalNow = currentJobIds.length <= 1 || currentJobIds.every((id) => terminalJobIdsRef.current.has(id))
           if (allTerminalNow) {
@@ -827,10 +836,16 @@ export default function GeneratePage() {
                 variation_index: variationMeta?.variation_index,
                 arrangementStatus: autoStatus ?? undefined,
               }
-              const idx = existing.findIndex((c) => c.arrangement_id === effectiveArrangementId)
+              const idx = existing.findIndex((c: any) =>
+                c.arrangement_id === effectiveArrangementId ||
+                c.render_job_id === currentJobId ||
+                (variationMeta?.variation_index != null && (c as any).variation_index === variationMeta.variation_index) ||
+                (!!variationMeta?.personality && (c as any).personality === variationMeta.personality)
+              )
               const next = [...existing]
-              if (idx >= 0) next[idx] = { ...next[idx], ...candidate }
+              if (idx >= 0) next[idx] = { ...next[idx], ...candidate, status: 'done', audioUnavailable: false }
               else next.push(candidate)
+              console.log('FRONTEND_VARIATION_READY_RECONCILED', { job_id: currentJobId, arrangement_id: effectiveArrangementId, matched_index: idx, variation_index: variationMeta?.variation_index, personality: variationMeta?.personality })
               console.log('FRONTEND_VARIATION_CARD_CREATED', { job_id: currentJobId, arrangement_id: effectiveArrangementId, variation_index: variationMeta?.variation_index, personality: variationMeta?.personality })
               return next
             })
