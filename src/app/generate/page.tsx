@@ -1440,7 +1440,7 @@ export default function GeneratePage() {
         options.producerMoves = selectedMoves
       }
 
-      options.variationCount = 3
+      options.variationCount = 2
       options.autoSave = false
       options.genre = selectedStyle
       options.mood = moodInput.trim() || undefined
@@ -1626,7 +1626,7 @@ export default function GeneratePage() {
   }
 
   const shouldUseRequestedSlots = currentJobIds.length > 0 && currentJobIds.some((id) => Boolean(jobMetadataById[id]))
-  const cardsToRender = (shouldUseRequestedSlots
+  const computedCards = (shouldUseRequestedSlots
     ? currentJobIds.map((jobId, idx) => {
       const meta = jobMetadataById[jobId] || {}
       const statusMeta = jobStatusById[jobId] || {}
@@ -1642,6 +1642,8 @@ export default function GeneratePage() {
     })
     : previewCandidates)
     .sort((a: any, b: any) => Number(a.variation_index ?? 999) - Number(b.variation_index ?? 999))
+
+  const cardsToRender = computedCards.slice(0, 2)
 
   if (cardsToRender.length > 0) {
     console.log('FRONTEND_VARIATION_SORTED', cardsToRender.map((c: any) => ({ variation_index: c.variation_index, arrangement_id: c.arrangement_id, status: c.status })))
@@ -2351,18 +2353,18 @@ export default function GeneratePage() {
                   disabled={isGenerating || !loopId}
                   className="px-3 py-2 text-sm bg-blue-600 hover:bg-blue-700 disabled:bg-gray-700 disabled:cursor-not-allowed text-white rounded-lg transition-colors"
                 >
-                  {isGenerating ? 'Generating...' : 'Generate 3 New Variations'}
+                  {isGenerating ? 'Generating...' : 'Generate 2 New Variations'}
                 </button>
               </div>
 
-              {cardsToRender.length === 1 && currentJobIds.length < 3 && (
+              {cardsToRender.length === 1 && currentJobIds.length < 2 && (
                 <p className="text-sm text-amber-400" role="alert">
                   Only one variation returned by backend.
                 </p>
               )}
 
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                {cardsToRender.map((candidate: any) => {
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {cardsToRender.map((candidate: any, cardIndex: number) => {
                   const isSelected = selectedPreviewId === candidate.arrangement_id
                   const isDone = candidate.status === 'done' || candidate.status === 'completed'
                   const isFailed = candidate.status === 'failed' || candidate.status === 'error' || candidate.status === 'cancelled' || candidate.status === 'missing_output'
@@ -2380,7 +2382,7 @@ export default function GeneratePage() {
                       className={`rounded-lg border p-4 space-y-3 ${isSelected ? 'border-blue-500 bg-blue-950/30' : 'border-gray-700 bg-gray-800/40'}`}
                     >
                       <div className="flex items-center justify-between gap-2">
-                        <p className="text-sm text-white font-medium">Variation {(candidate as any).variation_index != null ? Number((candidate as any).variation_index) + 1 : `#${candidate.arrangement_id}`} — {((candidate as any).personality || 'clean/main').toString()}</p>
+                        <p className="text-sm text-white font-medium">Variation {cardIndex + 1} — {((candidate as any).personality || 'clean/main').toString()}</p>
                         <SectionStateBadge state={badgeState} />
                       </div>
 
