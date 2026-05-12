@@ -1626,7 +1626,7 @@ export default function GeneratePage() {
   }
 
   const shouldUseRequestedSlots = currentJobIds.length > 0 && currentJobIds.some((id) => Boolean(jobMetadataById[id]))
-  const cardsToRender = (shouldUseRequestedSlots
+  const computedCards = (shouldUseRequestedSlots
     ? currentJobIds.map((jobId, idx) => {
       const meta = jobMetadataById[jobId] || {}
       const statusMeta = jobStatusById[jobId] || {}
@@ -1642,7 +1642,8 @@ export default function GeneratePage() {
     })
     : previewCandidates)
     .sort((a: any, b: any) => Number(a.variation_index ?? 999) - Number(b.variation_index ?? 999))
-    .slice(0, 2)
+
+  const cardsToRender = computedCards.slice(0, 2)
 
   if (cardsToRender.length > 0) {
     console.log('FRONTEND_VARIATION_SORTED', cardsToRender.map((c: any) => ({ variation_index: c.variation_index, arrangement_id: c.arrangement_id, status: c.status })))
