@@ -502,12 +502,12 @@ describe('Job completion with arrangement_id', () => {
     })
 
     // After job completion, the arrangement form is hidden (arrangementId is set)
-    // and the Preview Variations section appears. The "Generate 3 New Variations"
+    // and the Preview Variations section appears. The "Generate 2 New Variations"
     // button inside it should NOT be disabled (isGenerating = false).
     await waitFor(() => {
       expect(screen.getByText(/Preview Variations/i)).toBeInTheDocument()
     })
-    const regenBtn = screen.getByRole('button', { name: /Generate 3 New Variations/i })
+    const regenBtn = screen.getByRole('button', { name: /Generate 2 New Variations/i })
     expect(regenBtn).not.toBeDisabled()
   })
 
@@ -705,7 +705,7 @@ describe('Job completion with arrangement_id', () => {
     await waitFor(() => {
       expect(screen.getByText(/Preview Variations/i)).toBeInTheDocument()
     })
-    const regenBtn = screen.getByRole('button', { name: /Generate 3 New Variations/i })
+    const regenBtn = screen.getByRole('button', { name: /Generate 2 New Variations/i })
     expect(regenBtn).not.toBeDisabled()
   })
 })
@@ -1021,7 +1021,7 @@ describe('loadHistory failure does not keep isGenerating true', () => {
     await waitFor(() => {
       expect(screen.getByText(/Preview Variations/i)).toBeInTheDocument()
     })
-    const regenBtn = screen.getByRole('button', { name: /Generate 3 New Variations/i })
+    const regenBtn = screen.getByRole('button', { name: /Generate 2 New Variations/i })
     expect(regenBtn).not.toBeDisabled()
   })
 })
@@ -1776,10 +1776,10 @@ describe('isGenerating resets to false on ALL terminal job states', () => {
       await flushPromises()
 
       // After successful generation, the generate form is replaced by Preview Variations.
-      // The "Generate 3 New Variations" button in that section must not be disabled
+      // The "Generate 2 New Variations" button in that section must not be disabled
       // (isGenerating=false), proving the stuck-generating bug is fixed.
       await waitFor(() => {
-        expect(screen.getByRole('button', { name: /Generate 3 New Variations/i })).not.toBeDisabled()
+        expect(screen.getByRole('button', { name: /Generate 2 New Variations/i })).not.toBeDisabled()
       })
     })
   })
@@ -1844,10 +1844,10 @@ describe('State machine: required behaviors', () => {
     await setupAndGenerate()
 
     // The Generate button disappears when arrangementId is set; the
-    // "Generate 3 New Variations" button in the Preview Variations section
+    // "Generate 2 New Variations" button in the Preview Variations section
     // must not be disabled (isGenerating=false).
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: /Generate 3 New Variations/i })).not.toBeDisabled()
+      expect(screen.getByRole('button', { name: /Generate 2 New Variations/i })).not.toBeDisabled()
     })
   })
 
@@ -1867,7 +1867,7 @@ describe('State machine: required behaviors', () => {
     await setupAndGenerate()
 
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: /Generate 3 New Variations/i })).not.toBeDisabled()
+      expect(screen.getByRole('button', { name: /Generate 2 New Variations/i })).not.toBeDisabled()
     })
   })
 
@@ -1912,7 +1912,7 @@ describe('State machine: required behaviors', () => {
     })
     expect(screen.getByTestId('download-btn')).toHaveTextContent('99')
     // isGenerating must be cleared.
-    expect(screen.getByRole('button', { name: /Generate 3 New Variations/i })).not.toBeDisabled()
+    expect(screen.getByRole('button', { name: /Generate 2 New Variations/i })).not.toBeDisabled()
   })
 
   it('loadHistory failure does not keep isGenerating true', async () => {
@@ -1927,7 +1927,7 @@ describe('State machine: required behaviors', () => {
     // isGenerating is set to false in the pollJob success handler BEFORE any
     // loadHistory call, so a failing history load must never keep the UI stuck.
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: /Generate 3 New Variations/i })).not.toBeDisabled()
+      expect(screen.getByRole('button', { name: /Generate 2 New Variations/i })).not.toBeDisabled()
     })
   })
 
@@ -2090,7 +2090,7 @@ describe('Single-controller job polling path', () => {
     await waitFor(() => {
       expect(screen.getByText(/Preview Variations/i)).toBeInTheDocument()
     })
-    expect(screen.getByRole('button', { name: /Generate 3 New Variations/i })).not.toBeDisabled()
+    expect(screen.getByRole('button', { name: /Generate 2 New Variations/i })).not.toBeDisabled()
     const callsAfterTerminal = (getJobStatus as jest.Mock).mock.calls.length
     await act(async () => {
       jest.advanceTimersByTime(15_000)
@@ -2161,14 +2161,14 @@ describe('Generate request body correctness', () => {
     })
   })
 
-  it('sends variation_count=3 in the renderLoopAsync call', async () => {
+  it('sends variation_count=2 in the renderLoopAsync call', async () => {
     await renderPage('1')
     await clickGenerate()
 
     await waitFor(() => {
       expect(renderLoopAsync).toHaveBeenCalledWith(
         1,
-        expect.objectContaining({ variationCount: 3 })
+        expect.objectContaining({ variationCount: 2 })
       )
     })
   })
@@ -2255,9 +2255,9 @@ describe('Multiple candidates render as multiple cards', () => {
     })
 
     // Each candidate should appear as its own card
-    expect(screen.getByText(/Variation #201 — clean\/main/i)).toBeInTheDocument()
-    expect(screen.getByText(/Variation #202 — clean\/main/i)).toBeInTheDocument()
-    expect(screen.getByText(/Variation #203 — clean\/main/i)).toBeInTheDocument()
+    expect(screen.getByText(/Variation 1 — clean\/main/i)).toBeInTheDocument()
+    expect(screen.getByText(/Variation 2 — clean\/main/i)).toBeInTheDocument()
+    expect(screen.queryByText(/Variation 3/i)).not.toBeInTheDocument()
   })
 
   it('shows "Only one variation returned by backend." warning when only one candidate is present', async () => {
@@ -2385,7 +2385,7 @@ describe('partial multi-variation completion handling', () => {
     await flushPromises()
 
     await waitFor(() => {
-      expect(screen.getByText(/Variation 3 — R&B — melodic\/spacious/i)).toBeInTheDocument()
+      expect(screen.queryByText(/Variation 3 — R&B — melodic\/spacious/i)).not.toBeInTheDocument()
     })
   })
 
@@ -2406,7 +2406,7 @@ describe('partial multi-variation completion handling', () => {
     expect(screen.queryByText(/Rendering — preview will appear when ready\./i)).not.toBeInTheDocument()
   })
 
-  it('renders 3 variation slots, sorted 1/2/3, includes failed slot, and soft-handles 422 history', async () => {
+  it('renders only 2 variation slots in production UI, includes failed slot when present, and soft-handles 422 history', async () => {
     const LoopArchitectApiErrorCtor = (jest.requireMock('@/../../api/client') as any).LoopArchitectApiError
     ;(renderLoopAsync as jest.Mock).mockResolvedValue({
       jobs: [
@@ -2432,18 +2432,17 @@ describe('partial multi-variation completion handling', () => {
     await waitFor(() => {
       expect(screen.getByText(/Variation 1 — clean\/mainstream/i)).toBeInTheDocument()
       expect(screen.getByText(/Variation 2 — dark\/drop-heavy/i)).toBeInTheDocument()
-      expect(screen.getByText(/Variation 3 — cinematic\/experimental/i)).toBeInTheDocument()
+      expect(screen.queryByText(/Variation 3 — cinematic\/experimental/i)).not.toBeInTheDocument()
     })
-    expect(screen.getAllByText(/Failed \/ unavailable/i).length).toBeGreaterThan(0)
+    expect(screen.queryByText(/Failed \/ unavailable/i)).not.toBeInTheDocument()
     expect(console.log).toHaveBeenCalledWith('FRONTEND_ARRANGEMENT_DETAIL_422_SOFT_HANDLED', expect.any(Object))
     expect(console.log).toHaveBeenCalledWith('FRONTEND_VARIATION_SORTED', expect.arrayContaining([
       expect.objectContaining({ variation_index: 0 }),
       expect.objectContaining({ variation_index: 1 }),
-      expect.objectContaining({ variation_index: 2 }),
-    ]))
+          ]))
   })
 
-  it('does not show "Only one variation returned by backend" when 3 jobs were requested but one failed', async () => {
+  it('does not show "Only one variation returned by backend" when 2+ jobs were requested and one failed', async () => {
     ;(renderLoopAsync as jest.Mock).mockResolvedValue({
       jobs: [
         { job_id: 'job-a', personality: 'clean/mainstream', variation_index: 0 },
@@ -2464,8 +2463,9 @@ describe('partial multi-variation completion handling', () => {
     await flushPromises()
 
     await waitFor(() => {
-      expect(screen.getByText(/Variation 3 — cinematic\/experimental/i)).toBeInTheDocument()
-      expect(screen.getAllByText(/Failed \/ unavailable/i).length).toBeGreaterThan(0)
+      expect(screen.queryByText(/Variation 3 — cinematic\/experimental/i)).not.toBeInTheDocument()
+      expect(screen.getByText(/Variation 1 — clean\/mainstream/i)).toBeInTheDocument()
+      expect(screen.getByText(/Variation 2 — dark\/drop-heavy/i)).toBeInTheDocument()
     })
     expect(screen.queryByText(/Only one variation returned by backend\./i)).not.toBeInTheDocument()
   })
@@ -2509,8 +2509,9 @@ describe('partial multi-variation completion handling', () => {
     await flushPromises()
 
     await waitFor(() => {
-      expect(screen.getByText(/Variation 3 — cinematic\/experimental/i)).toBeInTheDocument()
-      expect(screen.getAllByText(/Failed \/ unavailable/i).length).toBeGreaterThan(0)
+      expect(screen.queryByText(/Variation 3 — cinematic\/experimental/i)).not.toBeInTheDocument()
+      expect(screen.getByText(/Variation 1 — clean\/mainstream/i)).toBeInTheDocument()
+      expect(screen.getByText(/Variation 2 — dark\/drop-heavy/i)).toBeInTheDocument()
     })
   })
 
@@ -2526,7 +2527,7 @@ describe('partial multi-variation completion handling', () => {
     await flushPromises()
 
     await waitFor(() => {
-      expect(screen.getByText(/Variation 3 — clean\/main/i)).toBeInTheDocument()
+      expect(screen.queryByText(/Variation 3 — clean\/main/i)).not.toBeInTheDocument()
     })
     expect(console.log).toHaveBeenCalledWith('FRONTEND_VARIATION_READY_RECONCILED', expect.objectContaining({ variation_index: 2 }))
   })
@@ -2553,9 +2554,9 @@ describe('partial multi-variation completion handling', () => {
     await waitFor(() => {
       expect(screen.getByText(/Variation 1 — clean\/main/i)).toBeInTheDocument()
       expect(screen.getByText(/Variation 2 — darker\/heavier/i)).toBeInTheDocument()
-      expect(screen.getByText(/Variation 3 — melodic\/bounce/i)).toBeInTheDocument()
+      expect(screen.queryByText(/Variation 3 — melodic\/bounce/i)).not.toBeInTheDocument()
     })
     const reconciledLogs = (console.log as jest.Mock).mock.calls.filter((call) => call[0] === 'FRONTEND_VARIATION_READY_RECONCILED')
-    expect(reconciledLogs.length).toBeGreaterThanOrEqual(3)
+    expect(reconciledLogs.length).toBeGreaterThanOrEqual(2)
   })
 })
