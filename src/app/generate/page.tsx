@@ -182,6 +182,11 @@ export default function GeneratePage() {
   const terminalJobIdsRef = useRef<Set<string>>(new Set())
   const terminalVariationIdsRef = useRef<Set<string>>(new Set())
   const history422LoopRef = useRef<string | null>(null)
+  const currentJobIdsRef = useRef<string[]>([])
+
+  useEffect(() => {
+    currentJobIdsRef.current = currentJobIds
+  }, [currentJobIds])
 
   const clearPreviewCandidates = () => {
     setPreviewCandidates((current) => {
@@ -626,7 +631,7 @@ export default function GeneratePage() {
               audioUrl: nextAudioUrl,
             }
             if (isTerminalSuccessStatus(candidate.status) && !isTerminalSuccessStatus(nextCandidate.status)) {
-              console.log('FRONTEND_STALE_PROCESSING_STATE_DROPPED', { arrangement_id: candidate.arrangement_id, existing_status: candidate.status, dropped_status: nextCandidate.status })
+              console.log('FRONTEND_STALE_PROCESSING_DROPPED', { arrangement_id: candidate.arrangement_id, existing_status: candidate.status, dropped_status: nextCandidate.status })
               return candidate
             }
             return nextCandidate
@@ -705,7 +710,7 @@ export default function GeneratePage() {
           const existingStatus = (existing?.status ?? '').toString().toLowerCase()
           const isExistingTerminal = ['succeeded', 'done', 'completed', 'success', 'finished', 'failed', 'error', 'cancelled', 'missing_output'].includes(existingStatus)
           if (isExistingTerminal && !isNextTerminal) {
-            console.log('FRONTEND_STALE_PROCESSING_STATE_DROPPED', { job_id: currentJobId, existing_status: existingStatus, dropped_status: nextStatus })
+            console.log('FRONTEND_STALE_PROCESSING_DROPPED', { job_id: currentJobId, existing_status: existingStatus, dropped_status: nextStatus })
             console.log('FRONTEND_TERMINAL_STATE_PRESERVED', { job_id: currentJobId, existing_status: existingStatus, dropped_status: nextStatus })
             return current
           }
@@ -736,6 +741,7 @@ export default function GeneratePage() {
         jobPollingAttemptRef.current += 1
         console.log("RAW_JOB_RESPONSE", job)
         console.log("POLL_TICK", { job_id: currentJobId, attempt: jobPollingAttemptRef.current, status: job.status ?? job.state ?? job.job_status ?? 'unknown' })
+        console.log('FRONTEND_JOB_POLL_TICK', { job_id: currentJobId, attempt: jobPollingAttemptRef.current, status: nextStatus || 'unknown' })
         console.log('job_status_update', { job_id: currentJobId, status: job.status })
 
         // Normalise across alternative field names used by different backend versions.
@@ -757,6 +763,7 @@ export default function GeneratePage() {
         const isFailedStatus = FAILED_STATUSES.has(effectiveStatus) || FAILED_STATUSES.has(effectiveTerminalState ?? '')
         if (!isSuccessStatus && !isFailedStatus) {
           lastJobProgressAtRef.current = Date.now()
+          console.log('FRONTEND_JOB_POLL_CONTINUING_NON_TERMINAL', { job_id: currentJobId, status: effectiveStatus })
         }
 
         console.log("JOB_TERMINAL_FLAGS", {
@@ -778,17 +785,20 @@ export default function GeneratePage() {
         if (isSuccessStatus) {
           console.log('FRONTEND_POLL_TERMINAL_SUCCESS_RECEIVED', { job_id: currentJobId, status: effectiveStatus, output_url: nextOutputUrl ?? null, arrangement_id: effectiveArrangementId })
           terminalJobIdsRef.current.add(currentJobId)
-          const allTerminalNow = currentJobIds.length <= 1 || currentJobIds.every((id) => terminalJobIdsRef.current.has(id))
+          const activeJobIds = currentJobIdsRef.current.length > 0 ? currentJobIdsRef.current : [currentJobId]
+          const allTerminalNow = activeJobIds.every((id) => terminalJobIdsRef.current.has(id))
           if (allTerminalNow) {
             console.log('FRONTEND_ALL_JOBS_TERMINAL', { job_ids: currentJobIds.length > 0 ? currentJobIds : [currentJobId] })
             console.log('FRONTEND_ALL_VARIATIONS_TERMINAL', { job_ids: currentJobIds.length > 0 ? currentJobIds : [currentJobId] })
           }
           console.log('JOB_TERMINAL', { job_id: currentJobId, status: effectiveStatus })
+          console.log('FRONTEND_JOB_POLL_TERMINAL', { job_id: currentJobId, status: effectiveStatus })
           if (jobPollingIntervalRef.current) {
             clearInterval(jobPollingIntervalRef.current)
             jobPollingIntervalRef.current = null
+            console.log('FRONTEND_JOB_POLL_STOPPED_TERMINAL', { job_id: currentJobId, status: effectiveStatus })
           }
-          const nextJobId = currentJobIds.find((id) => !terminalJobIdsRef.current.has(id))
+          const nextJobId = activeJobIds.find((id) => !terminalJobIdsRef.current.has(id))
           setCurrentJobId(nextJobId ?? null)
           // Immediately unblock the Generate button – never leave isGenerating true
           // after a terminal success, even if subsequent async fetches are slow.
@@ -974,6 +984,7 @@ export default function GeneratePage() {
         } else if (isFailedStatus) {
           terminalJobIdsRef.current.add(currentJobId)
           console.log('JOB_TERMINAL', { job_id: currentJobId, status: effectiveStatus })
+          console.log('FRONTEND_JOB_POLL_TERMINAL', { job_id: currentJobId, status: effectiveStatus })
           console.log('FRONTEND_VARIATION_JOB_FAILED_CARD', { job_id: currentJobId, variation_index: jobMetadataById[currentJobId]?.variation_index, personality: jobMetadataById[currentJobId]?.personality, error_message: job.error_message ?? null })
           setError(job.error_message || 'Render job failed. Please try again.')
           const allTerminal = currentJobIds.length > 0 && currentJobIds.every((id) => terminalJobIdsRef.current.has(id))
@@ -1002,6 +1013,7 @@ export default function GeneratePage() {
     }
 
     console.log('POLL_START', { job_id: currentJobId })
+    console.log('FRONTEND_JOB_POLL_STARTED', { job_id: currentJobId })
     jobPollingIntervalRef.current = setInterval(() => {
       const backoffMs = Math.min(8000, 2500 + jobPollingAttemptRef.current * 400)
       const inactiveMs = Date.now() - lastJobProgressAtRef.current
@@ -1014,6 +1026,8 @@ export default function GeneratePage() {
         if (!generationCompletedRef.current) {
           setIsGenerating(false)
           setError('Generation timed out after inactivity. The render may still finish in Recent Generations.')
+          setJobStatusById((curr) => ({ ...curr, [currentJobId]: { ...(curr[currentJobId] || {}), status: 'timeout', error_message: 'Polling timeout' } }))
+          console.log('FRONTEND_JOB_POLL_TIMEOUT', { job_id: currentJobId, reason: 'inactivity' })
         }
         return
       }
