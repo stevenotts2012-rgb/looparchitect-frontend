@@ -1549,6 +1549,16 @@ export default function GeneratePage() {
       console.log("RENDER_ASYNC_RESPONSE_FULL", renderResponse)
       if (Array.isArray(renderResponse.jobs) && renderResponse.jobs.length > 0) {
         console.log('FRONTEND_JOBS_ARRAY_DETECTED', { count: renderResponse.jobs.length, jobs: renderResponse.jobs })
+        if (renderResponse.jobs.length !== 2) {
+          console.error('RENDER_RESPONSE_INVALID_JOB_COUNT', {
+            expected: 2,
+            actual: renderResponse.jobs.length,
+            loop_id: loopIdNum,
+          })
+          setError(`Render response returned ${renderResponse.jobs.length} jobs. Expected exactly 2.`)
+          setIsGenerating(false)
+          return
+        }
       }
       const jobIds = extractJobIds(renderResponse)
       if (jobIds.length === 0) {
