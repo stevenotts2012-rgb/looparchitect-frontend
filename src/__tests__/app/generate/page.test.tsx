@@ -2617,4 +2617,38 @@ describe('partial multi-variation completion handling', () => {
     const reconciledLogs = (console.log as jest.Mock).mock.calls.filter((call) => call[0] === 'FRONTEND_VARIATION_READY_RECONCILED')
     expect(reconciledLogs.length).toBeGreaterThanOrEqual(2)
   })
+
+  it('ready variation renders Download from output_url and Download ZIP from stems_zip_url', async () => {
+    ;(renderLoopAsync as jest.Mock).mockResolvedValue({ jobs: [{ job_id: 'job-dl-1', personality: 'clean/main', variation_index: 0 }, { job_id: 'job-dl-2', personality: 'dark/heavy', variation_index: 1 }] })
+    ;(getJobStatus as jest.Mock).mockImplementation((id: string) => Promise.resolve(
+      id === 'job-dl-1'
+        ? { status: 'finished', arrangement_id: 301, output_url: 'https://cdn.example.com/301.wav', stems_zip_url: 'https://cdn.example.com/301-stems.zip' }
+        : { status: 'finished', arrangement_id: 302, output_url: 'https://cdn.example.com/302.wav' }
+    ))
+    ;(getArrangementStatus as jest.Mock).mockImplementation((id: number) => Promise.resolve(makeArrangementStatus({ id })))
+    await renderPage('1')
+    await act(async () => { fireEvent.change(screen.getByRole('spinbutton', { name: /Loop ID/i }), { target: { value: '1' } }) })
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: /Generate Arrangement/i })) })
+    await flushPromises()
+    await waitFor(() => expect(screen.getAllByRole('link', { name: /^Download$/i }).length).toBe(2))
+    expect(screen.getByRole('link', { name: /Download ZIP/i })).toHaveAttribute('href', 'https://cdn.example.com/301-stems.zip')
+    const downloadLinks = screen.getAllByRole('link', { name: /^Download$/i })
+    expect(downloadLinks.map((link) => link.getAttribute('href'))).toContain('https://cdn.example.com/301.wav')
+  })
+
+  it('ready variation without output_url shows Output unavailable and no third card', async () => {
+    ;(renderLoopAsync as jest.Mock).mockResolvedValue({ jobs: [{ job_id: 'job-no-out-1', personality: 'clean/main', variation_index: 0 }, { job_id: 'job-no-out-2', personality: 'dark/heavy', variation_index: 1 }, { job_id: 'job-no-out-3', personality: 'third/hidden', variation_index: 2 }] })
+    ;(getJobStatus as jest.Mock).mockImplementation((id: string) => Promise.resolve(
+      id === 'job-no-out-1'
+        ? { status: 'finished', arrangement_id: 411, output_url: null }
+        : { status: 'finished', arrangement_id: id === 'job-no-out-2' ? 412 : 413, output_url: `https://cdn.example.com/${id}.wav` }
+    ))
+    ;(getArrangementStatus as jest.Mock).mockImplementation((id: number) => Promise.resolve(makeArrangementStatus({ id })))
+    await renderPage('1')
+    await act(async () => { fireEvent.change(screen.getByRole('spinbutton', { name: /Loop ID/i }), { target: { value: '1' } }) })
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: /Generate Arrangement/i })) })
+    await flushPromises()
+    await waitFor(() => expect(screen.getByText(/Output unavailable/i)).toBeInTheDocument())
+    expect(screen.queryByText(/Variation 3/i)).not.toBeInTheDocument()
+  })
 })

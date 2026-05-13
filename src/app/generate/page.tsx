@@ -142,7 +142,16 @@ export default function GeneratePage() {
   const [currentJobId, setCurrentJobId] = useState<string | null>(null)
   const [currentJobIds, setCurrentJobIds] = useState<string[]>([])
   const [jobMetadataById, setJobMetadataById] = useState<Record<string, { personality?: string; variation_index?: number; variation_seed?: number }>>({})
-  const [jobStatusById, setJobStatusById] = useState<Record<string, { status?: string; output_url?: string | null; arrangement_id?: number | null; error_message?: string | null }>>({})
+  const [jobStatusById, setJobStatusById] = useState<Record<string, {
+    status?: string
+    output_url?: string | null
+    output_files?: Array<Record<string, unknown>> | null
+    stems_zip_url?: string | null
+    arrangement_id?: number | null
+    output_file_url?: string | null
+    output_s3_key?: string | null
+    error_message?: string | null
+  }>>({})
 
   const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null)
   const pollingErrorCountRef = useRef<number>(0)
@@ -229,6 +238,18 @@ export default function GeneratePage() {
       ? job.output_files.find((f: any) => typeof f?.signed_url === 'string' && f.signed_url.length > 0)?.signed_url
       : null
     return outputSigned || job.output_url || job.audio_url || job.preview_url || null
+  }
+
+  const getPrimaryOutputUrl = (candidate: any): string | null => {
+    const outputFiles = Array.isArray(candidate?.output_files) ? candidate.output_files : []
+    const signed = outputFiles.find((f: any) => typeof f?.signed_url === 'string' && f.signed_url.length > 0)?.signed_url
+    const direct = outputFiles.find((f: any) => typeof f?.url === 'string' && f.url.length > 0)?.url
+    const audioKind = outputFiles.find((f: any) => {
+      const contentType = (f?.content_type ?? '').toString().toLowerCase()
+      const kind = (f?.kind ?? f?.type ?? '').toString().toLowerCase()
+      return contentType.startsWith('audio/') || kind.includes('audio') || kind.includes('mix') || kind.includes('master')
+    })
+    return signed || audioKind?.signed_url || audioKind?.url || direct || candidate?.output_file_url || candidate?.output_url || null
   }
 
   useEffect(() => {
@@ -703,7 +724,11 @@ export default function GeneratePage() {
             [currentJobId]: {
               status: nextStatus || job.status,
               output_url: nextOutputUrl,
+              output_files: Array.isArray((job as any).output_files) ? (job as any).output_files : null,
+              stems_zip_url: typeof (job as any).stems_zip_url === 'string' ? (job as any).stems_zip_url : null,
               arrangement_id: nextArrangementId,
+              output_file_url: typeof (job as any).output_file_url === 'string' ? (job as any).output_file_url : null,
+              output_s3_key: typeof (job as any).output_s3_key === 'string' ? (job as any).output_s3_key : null,
               error_message: job.error_message ?? null,
             },
           }
@@ -1634,11 +1659,35 @@ export default function GeneratePage() {
       const personality = meta.personality || 'clean/main'
       console.log('FRONTEND_BACKEND_PERSONALITY_LABEL_USED', { job_id: jobId, personality })
       const matchedCandidate = previewCandidates.find((candidate) => (candidate as any).render_job_id === jobId || (statusMeta.arrangement_id != null && candidate.arrangement_id === statusMeta.arrangement_id))
-      if (matchedCandidate) return { ...matchedCandidate, slotKey: jobId, variation_index: variationIndex, personality, error_message: statusMeta.error_message }
+      if (matchedCandidate) return {
+        ...matchedCandidate,
+        slotKey: jobId,
+        variation_index: variationIndex,
+        personality,
+        error_message: statusMeta.error_message,
+        output_files: statusMeta.output_files ?? (matchedCandidate as any).output_files ?? null,
+        stems_zip_url: statusMeta.stems_zip_url ?? (matchedCandidate as any).stems_zip_url ?? null,
+        output_file_url: statusMeta.output_file_url ?? (matchedCandidate as any).output_file_url ?? null,
+        output_s3_key: statusMeta.output_s3_key ?? (matchedCandidate as any).output_s3_key ?? null,
+        output_url: statusMeta.output_url ?? (matchedCandidate as any).output_url ?? null,
+      }
       const statusNorm = (statusMeta.status || '').toString().toLowerCase()
-      const terminalWithoutOutput = ['done', 'completed', 'success', 'finished'].includes(statusNorm) && !statusMeta.output_url
+      const terminalWithoutOutput = ['done', 'completed', 'success', 'finished'].includes(statusNorm) && !getPrimaryOutputUrl(statusMeta)
       const fallbackStatus = terminalWithoutOutput ? 'missing_output' : (statusMeta.status || 'failed')
-      return { slotKey: jobId, arrangement_id: -(idx + 1), status: fallbackStatus, audioUrl: statusMeta.output_url || null, variation_index: variationIndex ?? idx, personality, error_message: statusMeta.error_message || null } as any
+      return {
+        slotKey: jobId,
+        arrangement_id: -(idx + 1),
+        status: fallbackStatus,
+        audioUrl: statusMeta.output_url || null,
+        variation_index: variationIndex ?? idx,
+        personality,
+        error_message: statusMeta.error_message || null,
+        output_files: statusMeta.output_files ?? null,
+        stems_zip_url: statusMeta.stems_zip_url ?? null,
+        output_file_url: statusMeta.output_file_url ?? null,
+        output_s3_key: statusMeta.output_s3_key ?? null,
+        output_url: statusMeta.output_url ?? null,
+      } as any
     })
     : previewCandidates)
     .sort((a: any, b: any) => Number(a.variation_index ?? 999) - Number(b.variation_index ?? 999))
@@ -2375,6 +2424,15 @@ export default function GeneratePage() {
                     candidate.status === 'processing'
 
                   const badgeState = deriveSectionState(candidate)
+                  const downloadUrl = getPrimaryOutputUrl(candidate)
+                  const zipUrl = typeof candidate?.stems_zip_url === 'string' && candidate.stems_zip_url.length > 0 ? candidate.stems_zip_url : null
+                  const canDownload = Boolean(downloadUrl)
+                  if (isDone && canDownload) {
+                    console.log('FRONTEND_VARIATION_OUTPUT_URL_ATTACHED', { arrangement_id: candidate.arrangement_id, output_url: downloadUrl })
+                  }
+                  if (isDone && !canDownload) {
+                    console.log('FRONTEND_READY_WITHOUT_OUTPUT_URL', { arrangement_id: candidate.arrangement_id, output_s3_key: candidate?.output_s3_key ?? null })
+                  }
 
                   return (
                     <div
@@ -2462,13 +2520,45 @@ export default function GeneratePage() {
                         >
                           Track
                         </button>
-                        <button
-                          onClick={() => handleSavePreview(candidate.arrangement_id)}
-                          disabled={candidate.arrangement_id <= 0 || !isDone || candidate.isSaved}
-                          className="flex-1 px-3 py-2 text-sm bg-green-600 hover:bg-green-700 disabled:bg-gray-700 disabled:cursor-not-allowed text-white rounded-lg transition-colors"
-                        >
-                          {candidate.isSaved ? 'Saved' : 'Save'}
-                        </button>
+                        {isDone && canDownload ? (
+                          <a
+                            href={downloadUrl || undefined}
+                            download
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="flex-1 px-3 py-2 text-center text-sm bg-green-600 hover:bg-green-700 text-white rounded-lg transition-colors"
+                            onClick={() => console.log('FRONTEND_VARIATION_DOWNLOAD_RENDERED', { arrangement_id: candidate.arrangement_id, output_url: downloadUrl })}
+                          >
+                            Download
+                          </a>
+                        ) : isDone ? (
+                          <button
+                            disabled
+                            className="flex-1 px-3 py-2 text-sm bg-gray-700 disabled:cursor-not-allowed text-gray-300 rounded-lg transition-colors"
+                          >
+                            Output unavailable
+                          </button>
+                        ) : (
+                          <button
+                            onClick={() => handleSavePreview(candidate.arrangement_id)}
+                            disabled={candidate.arrangement_id <= 0 || !isDone || candidate.isSaved}
+                            className="flex-1 px-3 py-2 text-sm bg-green-600 hover:bg-green-700 disabled:bg-gray-700 disabled:cursor-not-allowed text-white rounded-lg transition-colors"
+                          >
+                            {candidate.isSaved ? 'Saved' : 'Save'}
+                          </button>
+                        )}
+                        {isDone && zipUrl ? (
+                          <a
+                            href={zipUrl}
+                            download
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="flex-1 px-3 py-2 text-center text-sm bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg transition-colors"
+                            onClick={() => console.log('FRONTEND_VARIATION_ZIP_DOWNLOAD_RENDERED', { arrangement_id: candidate.arrangement_id, stems_zip_url: zipUrl })}
+                          >
+                            Download ZIP
+                          </a>
+                        ) : null}
                       </div>
                     </div>
                   )
